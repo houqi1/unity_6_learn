@@ -19,16 +19,32 @@ Shader "Custom/ShellFur"
         _ShellCount ("Shell Count (synced by script)", Float) = 32
         _FurLength ("Fur Length", Range(0.001, 0.5)) = 0.08
         _FurLengthRandom ("Length Randomness", Range(0, 1)) = 0.35
+        [Toggle(_USE_SMOOTH_NORMALS_VC)] _UseSmoothNormalsVC ("Use Smooth Normals (Vertex Color)", Float) = 0
 
         [Header(Physics Bend)]
         _Gravity ("Gravity Strength", Range(0, 2)) = 0.35
         _GravityDir ("Gravity Direction", Vector) = (0, -1, 0, 0)
 
+        [Header(Fins Shared)]
+        _FinExtrudeWeight ("Fin Extrude Weight", Range(0, 2)) = 1
+        _FinSilhouetteSharpness ("Silhouette Sharpness", Range(0.5, 32)) = 8
+        _FinSilhouetteBias ("Silhouette Bias", Range(0, 1)) = 0
+        _FinSilhouettePower ("Silhouette Power", Range(0.25, 4)) = 1
+        _FinBandStrength ("Contour Band Strength", Range(0, 2)) = 0.4
+        _FinRootOffset ("Root Depth Offset", Range(0, 0.02)) = 0.0015
+        _FinLengthScale ("Fin Length Scale", Range(0.25, 2)) = 1.0
+        _FinRootOpacity ("Fin Root Opacity", Range(0, 1)) = 1
+        _FinTipOpacity ("Fin Tip Opacity", Range(0, 1)) = 0
+        _FinOpacityFadeStart ("Fin Opacity Fade Start", Range(0, 1)) = 0
+        _FinOpacityFadeEnd ("Fin Opacity Fade End", Range(0, 1)) = 1
+        _FinOpacityPower ("Fin Opacity Power", Range(0.25, 4)) = 1
+
         [Header(Lighting)]
         _Smoothness ("Smoothness", Range(0, 1)) = 0.15
+        [Toggle(_USE_KAJIYA_KAY)] _UseKajiyaKay ("Kajiya-Kay Specular", Float) = 0
         _RimPower ("Rim Power", Range(0.5, 8)) = 2.5
-        _RimStrength ("Rim Strength", Range(0, 1)) = 0.25
-        _ShadowStrength ("Self Shadow", Range(0, 1)) = 0.35
+        _RimStrength ("Rim Strength", Range(0, 10)) = 0.25
+        _ShadowStrength ("Self Shadow", Range(0, 10)) = 0.35
 
         [Header(Rendering)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
@@ -68,6 +84,8 @@ Shader "Custom/ShellFur"
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
             #pragma multi_compile_fog
             #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_KAJIYA_KAY
+            #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
 
             #include "ShellFur.hlsl"
             ENDHLSL
@@ -94,6 +112,7 @@ Shader "Custom/ShellFur"
             #pragma multi_compile_instancing
             #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
             #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
 
             #include "ShellFur.hlsl"
             ENDHLSL
@@ -118,6 +137,7 @@ Shader "Custom/ShellFur"
 
             #pragma multi_compile_instancing
             #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
 
             #include "ShellFur.hlsl"
             ENDHLSL

@@ -22,6 +22,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _Occlusion;
     float  _AlphaCutoff;
     float  _ShellCount;
+    float  _ShellLayerOffset;
     float  _FurLength;
     float  _FurLengthRandom;
     float  _Gravity;
@@ -30,6 +31,18 @@ CBUFFER_START(UnityPerMaterial)
     float  _RimPower;
     float  _RimStrength;
     float  _ShadowStrength;
+    float  _FinSilhouetteSharpness;
+    float  _FinExtrudeWeight;
+    float  _FinSilhouetteBias;
+    float  _FinSilhouettePower;
+    float  _FinBandStrength;
+    float  _FinRootOffset;
+    float  _FinLengthScale;
+    float  _FinRootOpacity;
+    float  _FinTipOpacity;
+    float  _FinOpacityFadeStart;
+    float  _FinOpacityFadeEnd;
+    float  _FinOpacityPower;
 CBUFFER_END
 
 // ---------------------------------------------------------------------------
@@ -58,11 +71,30 @@ struct ShellData
 float GetShellLayer(uint instanceId)
 {
     float count = max(_ShellCount, 1.0);
+    // Optional offset skips base skin (layer 0) when hide-base is on in slot mode.
+    float idx = (float)instanceId + max(_ShellLayerOffset, 0.0);
     // Layer 0 sits on the surface; last layer is near the tip.
-    return saturate((float)instanceId / max(count - 1.0, 1.0));
+    return saturate(idx / max(count - 1.0, 1.0));
 }
 
-float3 ApplyShellDisplacement(float3 positionOS, float3 normalOS, float layer)
+// Decode object-space unit normal stored in vertex color (RGB = n * 0.5 + 0.5).
+float3 DecodeSmoothNormalOS(float4 vertexColor)
+{
+    float3 n = vertexColor.rgb * 2.0 - 1.0;
+    float len2 = dot(n, n);
+    return len2 > 1e-8 ? n * rsqrt(len2) : float3(0, 1, 0);
+}
+
+float3 ResolveExtrudeNormalOS(float3 meshNormalOS, float4 vertexColor)
+{
+#if defined(_USE_SMOOTH_NORMALS_VC)
+    return DecodeSmoothNormalOS(vertexColor);
+#else
+    return meshNormalOS;
+#endif
+}
+
+float3 ApplyShellDisplacement(float3 positionOS, float3 extrudeNormalOS, float layer)
 {
     // Quadratic bend so tips respond more than roots.
     float layer2 = layer * layer;
@@ -71,7 +103,7 @@ float3 ApplyShellDisplacement(float3 positionOS, float3 normalOS, float layer)
     // so rotated meshes still droop "down" in the world.
     float3 gravityWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * _FurLength);
     float3 bendOS = TransformWorldToObjectDir(gravityWS, false);
-    float3 offset = normalOS * (layer * _FurLength) + bendOS;
+    float3 offset = extrudeNormalOS * (layer * _FurLength) + bendOS;
     return positionOS + offset;
 }
 
@@ -82,13 +114,15 @@ bool EvaluateFurMask(float2 furUV, float layer, out float alphaOut, out float st
     alphaOut = 0.0;
     strandHeight = 1.0;
 
-    // Layer 0 is the solid skin / root — never cut holes into the body.
+    // Shell layer 0 is solid skin. Fin cards always use density (no solid root strip).
+#if !defined(SHELL_FUR_FIN)
     if (layer < 0.001)
     {
         alphaOut = 1.0;
         strandHeight = 1.0;
         return true;
     }
+#endif
 
 #if defined(_USE_PROCEDURAL)
     float2 gridUV = furUV * _Density;
@@ -182,9 +216,28 @@ half3 ShadeShellFur(float3 positionWS, float3 normalWS, float2 uv, float layer, 
     float rim = pow(abs(1.0 - ndotv), max(_RimPower, 0.0001)) * _RimStrength * layer01;
     color += tipColor * rim;
 
-    // Mild specular lobe along the light for a bit of sheen.
-    float3 h = normalize(mainLight.direction + v);
-    float spec = pow(abs(saturate(dot(n, h))), lerp(8.0, 64.0, saturate(_Smoothness))) * _Smoothness;
+    // Specular: Blinn-Phong (default) or Kajiya-Kay (hair fiber along shell normal).
+    float3 L = mainLight.direction;
+    float specExp = lerp(8.0, 64.0, saturate(_Smoothness));
+    float spec = 0.0;
+
+#if defined(_USE_KAJIYA_KAY)
+    // Strand tangent ≈ extrusion direction (surface normal for shell fur).
+    float3 T = n;
+    float TdotL = clamp(dot(T, L), -1.0, 1.0);
+    float TdotV = clamp(dot(T, v), -1.0, 1.0);
+    float sinTL = sqrt(max(0.0, 1.0 - TdotL * TdotL));
+    float sinTV = sqrt(max(0.0, 1.0 - TdotV * TdotV));
+    // Classic Kajiya-Kay longitudinal specular: cos(θi − θr)
+    float kk = saturate(TdotL * TdotV + sinTL * sinTV);
+    spec = pow(abs(kk), max(specExp, 1e-3)) * _Smoothness;
+    // Slightly stronger toward tips so sheen reads on outer shells.
+    spec *= lerp(0.35, 1.0, layer01);
+#else
+    float3 h = normalize(L + v);
+    spec = pow(abs(saturate(dot(n, h))), max(specExp, 1e-3)) * _Smoothness;
+#endif
+
     color += spec * mainLight.color * mainLight.shadowAttenuation * tipColor;
 
     return color;
@@ -197,6 +250,7 @@ struct Attributes
 {
     float4 positionOS : POSITION;
     float3 normalOS   : NORMAL;
+    float4 color      : COLOR;
     float2 uv         : TEXCOORD0;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
@@ -228,9 +282,11 @@ Varyings ShellFurVert(Attributes input)
 #endif
 
     float layer = GetShellLayer(id);
-    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, input.normalOS, layer);
+    float3 extrudeN = ResolveExtrudeNormalOS(input.normalOS, input.color);
+    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
 
     VertexPositionInputs posInputs = GetVertexPositionInputs(posOS);
+    // Lighting keeps mesh normals; extrusion may use smooth normals from vertex color.
     VertexNormalInputs   nrmInputs = GetVertexNormalInputs(input.normalOS);
 
     output.positionCS = posInputs.positionCS;
@@ -268,6 +324,7 @@ struct ShadowAttributes
 {
     float4 positionOS : POSITION;
     float3 normalOS   : NORMAL;
+    float4 color      : COLOR;
     float2 uv         : TEXCOORD0;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
@@ -295,10 +352,11 @@ ShadowVaryings ShellFurShadowVert(ShadowAttributes input)
 #endif
 
     float layer = GetShellLayer(id);
-    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, input.normalOS, layer);
+    float3 extrudeN = ResolveExtrudeNormalOS(input.normalOS, input.color);
+    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
 
     float3 positionWS = TransformObjectToWorld(posOS);
-    float3 normalWS   = TransformObjectToWorldNormal(input.normalOS);
+    float3 normalWS   = TransformObjectToWorldNormal(extrudeN);
 
 #if _CASTING_PUNCTUAL_LIGHT_SHADOW
     float3 lightDirectionWS = normalize(_LightPosition - positionWS);
@@ -337,6 +395,7 @@ struct DepthAttributes
 {
     float4 positionOS : POSITION;
     float3 normalOS   : NORMAL;
+    float4 color      : COLOR;
     float2 uv         : TEXCOORD0;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
@@ -361,7 +420,8 @@ DepthVaryings ShellFurDepthVert(DepthAttributes input)
 #endif
 
     float layer = GetShellLayer(id);
-    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, input.normalOS, layer);
+    float3 extrudeN = ResolveExtrudeNormalOS(input.normalOS, input.color);
+    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
 
     output.positionCS = TransformObjectToHClip(posOS);
     output.furUV = TRANSFORM_TEX(input.uv, _FurMap);
@@ -380,5 +440,237 @@ half4 ShellFurDepthFrag(DepthVaryings input) : SV_Target
     clip(alpha - 0.01);
     return 0;
 }
+
+// ---------------------------------------------------------------------------
+// Fins (pre-generated edge quads; silhouette extrusion in VS)
+// Mesh layout:
+//   POSITION  = base position OS (on surface edge)
+//   NORMAL    = extrusion up OS
+//   TEXCOORD0 = surface UV
+//   TEXCOORD1 = adjacent face normal A (OS)
+//   TEXCOORD2 = adjacent face normal B (OS)
+//   TEXCOORD3 = (height01, unused)  0 = root, 1 = tip
+// ---------------------------------------------------------------------------
+#if defined(SHELL_FUR_FIN)
+
+// Returns 0..1 weight for how much a fin tip should erect (view-dependent).
+float ComputeFinSilhouette(float3 positionWS, float3 faceNormalA_OS, float3 faceNormalB_OS)
+{
+    float3 nA = TransformObjectToWorldNormal(faceNormalA_OS);
+    float3 nB = TransformObjectToWorldNormal(faceNormalB_OS);
+    float3 V = GetWorldSpaceNormalizeViewDir(positionWS);
+
+    float dA = dot(nA, V);
+    float dB = dot(nB, V);
+    float sharp = max(_FinSilhouetteSharpness, 0.01);
+    float raw = 0.0;
+
+    // Boundary edges store nB == nA: use grazing of the single face.
+    if (dot(nA, nB) > 0.995)
+    {
+        float graze = saturate(1.0 - abs(dA));
+        raw = pow(abs(graze), lerp(2.5, 0.75, saturate(sharp / 16.0)));
+    }
+    else
+    {
+        // Manifold silhouette: adjacent faces on opposite sides of the view plane.
+        float opposite = saturate(-dA * dB * sharp);
+        // Soft band around the contour (reduces popping; scale with Band Strength).
+        float mixAB = abs(dA) + abs(dB);
+        float band = saturate(1.0 - mixAB * 0.5);
+        band = pow(abs(band), 2.0) * saturate(_FinBandStrength);
+        raw = saturate(opposite + band * opposite);
+    }
+
+    // Bias: raise to require a stronger silhouette before fins lift.
+    raw = saturate(raw - saturate(_FinSilhouetteBias));
+
+    // Power: >1 keeps only strong contours fully erect; <1 lifts a wider band.
+    float p = max(_FinSilhouettePower, 1e-3);
+    raw = pow(abs(raw), p);
+
+    // Overall extrude weight (0 = flat, 1 = normal, >1 = stronger tips).
+    return saturate(raw * max(_FinExtrudeWeight, 0.0));
+}
+
+float3 ApplyFinDisplacement(float3 baseOS, float3 upOS, float height01, float silhouette)
+{
+    // Multi-segment fins sample this at several heights; h² gravity makes a drooping polyline/curve.
+    float h = saturate(height01) * saturate(silhouette);
+    float len = _FurLength * max(_FinLengthScale, 0.0);
+
+    // Micro lift on roots to reduce z-fight with shells / surface.
+    float rootLift = _FinRootOffset * (1.0 - saturate(height01));
+
+    float3 up = normalize(upOS + 1e-5);
+    float3 pos = baseOS + up * (len * h + rootLift);
+
+    // Gravity increases with height (quadratic) — intermediate segment rows create a visible arc.
+    float layer2 = h * h;
+    float3 gravityWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * len);
+    pos += TransformWorldToObjectDir(gravityWS, false);
+    return pos;
+}
+
+struct FinAttributes
+{
+    float4 positionOS : POSITION;
+    float3 normalOS   : NORMAL;     // up
+    float2 uv         : TEXCOORD0;
+    float3 faceA      : TEXCOORD1;
+    float3 faceB      : TEXCOORD2;
+    float2 height     : TEXCOORD3;  // x = 0 root / 1 tip
+};
+
+// Root (height=0) → tip (height=1) opacity falloff along the fin card.
+float EvaluateFinHeightOpacity(float height01)
+{
+    float h = saturate(height01);
+    float fadeStart = saturate(_FinOpacityFadeStart);
+    float fadeEnd = max(saturate(_FinOpacityFadeEnd), fadeStart + 1e-4);
+    // 0 before start, 1 after end.
+    float t = saturate((h - fadeStart) / (fadeEnd - fadeStart));
+    t = pow(abs(t), max(_FinOpacityPower, 1e-3));
+    return lerp(saturate(_FinRootOpacity), saturate(_FinTipOpacity), t);
+}
+
+struct FinVaryings
+{
+    float4 positionCS : SV_POSITION;
+    float3 positionWS : TEXCOORD0;
+    float3 normalWS   : TEXCOORD1;
+    float2 uv         : TEXCOORD2;
+    float2 furUV      : TEXCOORD3;
+    float  layer      : TEXCOORD4;
+    float  fogFactor  : TEXCOORD5;
+    float  silhouette : TEXCOORD6;
+    float  height01   : TEXCOORD7;
+};
+
+FinVaryings ShellFurFinVert(FinAttributes input)
+{
+    FinVaryings output = (FinVaryings)0;
+
+    float3 baseWS = TransformObjectToWorld(input.positionOS.xyz);
+    float sil = ComputeFinSilhouette(baseWS, input.faceA, input.faceB);
+
+    float height01 = input.height.x;
+    float3 posOS = ApplyFinDisplacement(input.positionOS.xyz, input.normalOS, height01, sil);
+
+    // Degenerate non-silhouette fins (tips collapse to base).
+    VertexPositionInputs posInputs = GetVertexPositionInputs(posOS);
+    float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
+
+    output.positionCS = posInputs.positionCS;
+    output.positionWS = posInputs.positionWS;
+    output.normalWS   = normalWS;
+    output.uv         = TRANSFORM_TEX(input.uv, _BaseMap);
+    output.furUV      = TRANSFORM_TEX(input.uv, _FurMap);
+    output.layer      = height01 * sil; // effective shell height for mask/lighting
+    output.fogFactor  = ComputeFogFactor(posInputs.positionCS.z);
+    output.silhouette = sil;
+    output.height01   = height01;
+    return output;
+}
+
+half4 ShellFurFinFrag(FinVaryings input) : SV_Target
+{
+    // Cull almost-invisible fins early.
+    if (input.silhouette < 0.001)
+        discard;
+
+    float alpha;
+    float strandHeight;
+    // Use max(layer, small) so root of fin still samples density taper.
+    float layer = max(input.layer, 0.02);
+    // Density / procedural pattern still hard-masks holes (no partial strand coverage).
+    if (!EvaluateFurMask(input.furUV, layer, alpha, strandHeight))
+        discard;
+
+    alpha *= saturate(input.silhouette);
+    // Root → tip opacity: smooth alpha blend (not clip/cutoff).
+    alpha *= EvaluateFinHeightOpacity(input.height01);
+
+#if defined(SHELL_FUR_FIN_ALPHA_BLEND)
+    // Only skip fully transparent pixels; mid-alpha is blended by the pipeline.
+    if (alpha < 1.0 / 255.0)
+        discard;
+#else
+    clip(alpha - 0.01);
+#endif
+
+    half3 color = ShadeShellFur(input.positionWS, input.normalWS, input.uv, layer, strandHeight);
+    color = MixFog(color, input.fogFactor);
+    return half4(color, alpha);
+}
+
+struct FinShadowAttributes
+{
+    float4 positionOS : POSITION;
+    float3 normalOS   : NORMAL;
+    float2 uv         : TEXCOORD0;
+    float3 faceA      : TEXCOORD1;
+    float3 faceB      : TEXCOORD2;
+    float2 height     : TEXCOORD3;
+};
+
+struct FinShadowVaryings
+{
+    float4 positionCS : SV_POSITION;
+    float2 furUV      : TEXCOORD0;
+    float  layer      : TEXCOORD1;
+    float  silhouette : TEXCOORD2;
+    float  height01   : TEXCOORD3;
+};
+
+FinShadowVaryings ShellFurFinShadowVert(FinShadowAttributes input)
+{
+    FinShadowVaryings output = (FinShadowVaryings)0;
+
+    float3 baseWS = TransformObjectToWorld(input.positionOS.xyz);
+    float sil = ComputeFinSilhouette(baseWS, input.faceA, input.faceB);
+    float height01 = input.height.x;
+    float3 posOS = ApplyFinDisplacement(input.positionOS.xyz, input.normalOS, height01, sil);
+
+    float3 positionWS = TransformObjectToWorld(posOS);
+    float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
+
+#if _CASTING_PUNCTUAL_LIGHT_SHADOW
+    float3 lightDirectionWS = normalize(_LightPosition - positionWS);
+#else
+    float3 lightDirectionWS = _LightDirection;
+#endif
+
+    output.positionCS = TransformWorldToHClip(ApplyShadowBias(positionWS, normalWS, lightDirectionWS));
+#if UNITY_REVERSED_Z
+    output.positionCS.z = min(output.positionCS.z, UNITY_NEAR_CLIP_VALUE);
+#else
+    output.positionCS.z = max(output.positionCS.z, UNITY_NEAR_CLIP_VALUE);
+#endif
+
+    output.furUV = TRANSFORM_TEX(input.uv, _FurMap);
+    output.layer = height01 * sil;
+    output.silhouette = sil;
+    output.height01 = height01;
+    return output;
+}
+
+half4 ShellFurFinShadowFrag(FinShadowVaryings input) : SV_Target
+{
+    if (input.silhouette < 0.02)
+        discard;
+
+    float alpha;
+    float strandHeight;
+    float layer = max(input.layer, 0.02);
+    if (!EvaluateFurMask(input.furUV, layer, alpha, strandHeight))
+        discard;
+    alpha *= saturate(input.silhouette);
+    alpha *= EvaluateFinHeightOpacity(input.height01);
+    clip(alpha - 0.01);
+    return 0;
+}
+
+#endif // SHELL_FUR_FIN
 
 #endif // SHELL_FUR_INCLUDED

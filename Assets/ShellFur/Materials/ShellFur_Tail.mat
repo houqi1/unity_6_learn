@@ -1,0 +1,70 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: ShellFur_Tail
+  m_Shader: {fileID: 4800000, guid: ab54417d7c7645deb721e6458a3c22a6, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _USE_SMOOTH_NORMALS_VC
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 1
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _BaseMap:
+        m_Texture: {fileID: 2800000, guid: c4c7a69510f11494ea4a7617bd2540f3, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _FurMap:
+        m_Texture: {fileID: 2800000, guid: c100fa68c7424d02bc40287e5537af78, type: 3}
+        m_Scale: {x: 10, y: 10}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _AlphaCutoff: 0
+    - _Cull: 2
+    - _Density: 140
+    - _FinBandStrength: 0.4
+    - _FinExtrudeWeight: 1
+    - _FinLengthScale: 1
+    - _FinOpacityFadeEnd: 1
+    - _FinOpacityFadeStart: 0
+    - _FinOpacityPower: 1
+    - _FinRootOffset: 0.0015
+    - _FinRootOpacity: 1
+    - _FinSilhouetteBias: 0
+    - _FinSilhouettePower: 1
+    - _FinSilhouetteSharpness: 8
+    - _FinTipOpacity: 0
+    - _FurLength: 0.1
+    - _FurLengthRandom: 0.35
+    - _Gravity: 0.4
+    - _Occlusion: 0
+    - _RimPower: 4.91
+    - _RimStrength: 2.93
+    - _ShadowStrength: 0.119
+    - _ShellCount: 32
+    - _Smoothness: 0.886
+    - _Thickness: 0.556
+    - _UseKajiyaKay: 0
+    - _UseProcedural: 0
+    - _UseSmoothNormalsVC: 1
+    m_Colors:
+    - _BaseColor: {r: 0.32, g: 0.18, b: 0.1, a: 1}
+    - _GravityDir: {r: 0, g: -1, b: 0, a: 0}
+    - _TipColor: {r: 0.9, g: 0.72, b: 0.45, a: 1}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1
