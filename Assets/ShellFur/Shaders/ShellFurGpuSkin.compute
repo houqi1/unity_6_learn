@@ -1,0 +1,89 @@
+// Skin bind-pose fur vertices once per frame (world space).
+// M_i = bone.localToWorld * bindPose_i
+
+#pragma kernel CSSkin
+
+// Match ShellFurGpuSkinTypes.BindVertex / SkinnedVertex (float packed)
+struct BindVertex
+{
+    float px, py, pz, pad0;
+    float nx, ny, nz, pad1;
+    float sx, sy, sz, pad2;
+    float u, v, pad3a, pad3b;
+    float w0, w1, w2, w3;
+    float i0, i1, i2, i3;
+};
+
+struct SkinnedVertex
+{
+    float px, py, pz, pad0;
+    float nx, ny, nz, pad1;
+    float sx, sy, sz, pad2;
+    float u, v, pad3a, pad3b;
+};
+
+StructuredBuffer<BindVertex> _BindVertices;
+StructuredBuffer<float4x4> _BoneMatrices;
+RWStructuredBuffer<SkinnedVertex> _SkinnedVertices;
+
+uint _VertexCount;
+uint _BoneCount;
+
+float4x4 LoadSkinMatrix(float w0, float w1, float w2, float w3, float i0, float i1, float i2, float i3)
+{
+    float4x4 m = 0;
+    float w[4] = { w0, w1, w2, w3 };
+    float idx[4] = { i0, i1, i2, i3 };
+    [unroll]
+    for (int i = 0; i < 4; i++)
+    {
+        if (w[i] <= 0.0)
+            continue;
+        uint bi = (uint)idx[i];
+        if (bi >= _BoneCount)
+            continue;
+        m += _BoneMatrices[bi] * w[i];
+    }
+    return m;
+}
+
+[numthreads(64, 1, 1)]
+void CSSkin(uint3 id : SV_DispatchThreadID)
+{
+    uint vid = id.x;
+    if (vid >= _VertexCount)
+        return;
+
+    BindVertex v = _BindVertices[vid];
+    float wSum = v.w0 + v.w1 + v.w2 + v.w3;
+    float4x4 M = LoadSkinMatrix(v.w0, v.w1, v.w2, v.w3, v.i0, v.i1, v.i2, v.i3);
+    if (wSum < 1e-6 && _BoneCount > 0)
+        M = _BoneMatrices[0];
+
+    float3 p = mul(M, float4(v.px, v.py, v.pz, 1.0)).xyz;
+    float3x3 R = (float3x3)M;
+    float3 n = mul(R, float3(v.nx, v.ny, v.nz));
+    float3 s = mul(R, float3(v.sx, v.sy, v.sz));
+
+    float n2 = dot(n, n);
+    float s2 = dot(s, s);
+    n = n2 > 1e-12 ? n * rsqrt(n2) : float3(0, 1, 0);
+    s = s2 > 1e-12 ? s * rsqrt(s2) : n;
+
+    float det =
+        R._m00 * (R._m11 * R._m22 - R._m12 * R._m21) -
+        R._m01 * (R._m10 * R._m22 - R._m12 * R._m20) +
+        R._m02 * (R._m10 * R._m21 - R._m11 * R._m20);
+    if (det < 0.0)
+    {
+        n = -n;
+        s = -s;
+    }
+
+    SkinnedVertex o;
+    o.px = p.x; o.py = p.y; o.pz = p.z; o.pad0 = 0;
+    o.nx = n.x; o.ny = n.y; o.nz = n.z; o.pad1 = 0;
+    o.sx = s.x; o.sy = s.y; o.sz = s.z; o.pad2 = 0;
+    o.u = v.u; o.v = v.v; o.pad3a = 0; o.pad3b = 0;
+    _SkinnedVertices[vid] = o;
+}

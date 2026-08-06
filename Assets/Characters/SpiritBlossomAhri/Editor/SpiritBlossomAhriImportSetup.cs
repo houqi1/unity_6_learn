@@ -2,8 +2,10 @@ using UnityEditor;
 using UnityEngine;
 
 /// <summary>
-/// Ensures SpiritBlossomAhri FBX imports with Generic rig, animations,
-/// independent Body/Tails/Tail materials, and a ready-to-use prefab.
+/// Import settings for SpiritBlossomAhri.
+/// Important: do NOT "fix" root negative scale in Blender by Apply Scale —
+/// that destroys bind pose. Source GLB ships with a mirrored root scale.
+/// Faces: use double-sided materials (Cull Off).
 /// </summary>
 public class SpiritBlossomAhriImportSetup : AssetPostprocessor
 {
@@ -21,7 +23,6 @@ public class SpiritBlossomAhriImportSetup : AssetPostprocessor
         importer.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
         importer.importAnimation = true;
         importer.resampleCurves = true;
-        // Keep animation curves as exported — do not keyframe-reduce (avoids skinned distortion).
         importer.animationCompression = ModelImporterAnimationCompression.Off;
         importer.materialImportMode = ModelImporterMaterialImportMode.ImportViaMaterialDescription;
         importer.materialLocation = ModelImporterMaterialLocation.External;
@@ -30,7 +31,8 @@ public class SpiritBlossomAhriImportSetup : AssetPostprocessor
         importer.globalScale = 1f;
         importer.useFileScale = true;
         importer.meshCompression = ModelImporterMeshCompression.Off;
-        importer.isReadable = false;
+        // Needed for runtime mesh access (e.g. ShellFur / procedural mesh).
+        importer.isReadable = true;
         importer.optimizeMeshPolygons = true;
         importer.optimizeMeshVertices = true;
         importer.weldVertices = true;
@@ -39,9 +41,8 @@ public class SpiritBlossomAhriImportSetup : AssetPostprocessor
         importer.importCameras = false;
         importer.importLights = false;
         importer.preserveHierarchy = true;
-        importer.skinWeights = ModelImporterSkinWeights.Standard;
-        // Keep original bind pose / hierarchy from Blender (includes mirrored root scale).
         importer.optimizeGameObjects = false;
+        importer.skinWeights = ModelImporterSkinWeights.Standard;
     }
 
     static void OnPostprocessAllAssets(
@@ -52,12 +53,11 @@ public class SpiritBlossomAhriImportSetup : AssetPostprocessor
     {
         foreach (var path in importedAssets)
         {
-            if (path != ModelPath)
-                continue;
-
-            // No SaveAndReimport here — avoids import loops.
-            BuildPrefab();
-            break;
+            if (path == ModelPath)
+            {
+                BuildPrefab();
+                break;
+            }
         }
     }
 
@@ -86,40 +86,29 @@ public class SpiritBlossomAhriImportSetup : AssetPostprocessor
         return src;
     }
 
-    static void ApplyMaterialsToRenderers(GameObject root, Material[] projectMats)
-    {
-        foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-        {
-            var shared = smr.sharedMaterials;
-            if (shared == null || shared.Length == 0)
-                continue;
-
-            var remapped = new Material[shared.Length];
-            for (int i = 0; i < shared.Length; i++)
-                remapped[i] = ResolveMaterial(shared[i], i, projectMats);
-            smr.sharedMaterials = remapped;
-        }
-    }
-
     static void BuildPrefab()
     {
         var model = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPath);
         if (model == null)
-        {
-            Debug.LogWarning("[SpiritBlossomAhri] FBX not found, skip prefab.");
             return;
-        }
 
         var projectMats = LoadProjectMaterials();
         var instance = (GameObject)PrefabUtility.InstantiatePrefab(model);
         try
         {
-            ApplyMaterialsToRenderers(instance, projectMats);
-            PrefabUtility.SaveAsPrefabAsset(instance, PrefabPath);
+            foreach (var smr in instance.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                var shared = smr.sharedMaterials;
+                if (shared == null || shared.Length == 0)
+                    continue;
+                var remapped = new Material[shared.Length];
+                for (int i = 0; i < shared.Length; i++)
+                    remapped[i] = ResolveMaterial(shared[i], i, projectMats);
+                smr.sharedMaterials = remapped;
+            }
 
-            var smr = instance.GetComponentInChildren<SkinnedMeshRenderer>();
-            int slots = smr != null && smr.sharedMaterials != null ? smr.sharedMaterials.Length : 0;
-            Debug.Log($"[SpiritBlossomAhri] Prefab ready: {PrefabPath} | material slots={slots} | Generic + animations kept.");
+            PrefabUtility.SaveAsPrefabAsset(instance, PrefabPath);
+            Debug.Log("[SpiritBlossomAhri] Prefab rebuilt (bind pose preserved). Root may show mirrored scale from source GLB — do not Apply Scale in Blender.");
         }
         finally
         {
@@ -130,19 +119,7 @@ public class SpiritBlossomAhriImportSetup : AssetPostprocessor
     [MenuItem("Tools/SpiritBlossomAhri/Reimport Model + Rebuild Prefab")]
     static void ReimportMenu()
     {
-        var importer = AssetImporter.GetAtPath(ModelPath) as ModelImporter;
-        if (importer != null)
-        {
-            importer.SearchAndRemapMaterials(
-                ModelImporterMaterialName.BasedOnMaterialName,
-                ModelImporterMaterialSearch.Everywhere);
-            importer.SaveAndReimport();
-        }
-        else
-        {
-            AssetDatabase.ImportAsset(ModelPath, ImportAssetOptions.ForceUpdate);
-        }
-
+        AssetDatabase.ImportAsset(ModelPath, ImportAssetOptions.ForceUpdate);
         BuildPrefab();
         var prefab = AssetDatabase.LoadMainAssetAtPath(PrefabPath);
         Selection.activeObject = prefab != null ? prefab : AssetDatabase.LoadMainAssetAtPath(ModelPath);

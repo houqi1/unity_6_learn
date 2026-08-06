@@ -286,12 +286,16 @@ Varyings ShellFurVert(Attributes input)
     float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
 
     VertexPositionInputs posInputs = GetVertexPositionInputs(posOS);
-    // Lighting keeps mesh normals; extrusion may use smooth normals from vertex color.
-    VertexNormalInputs   nrmInputs = GetVertexNormalInputs(input.normalOS);
+    // Lighting uses the same normal as extrusion when smooth-from-VC is on.
+#if defined(_USE_SMOOTH_NORMALS_VC)
+    float3 normalWS = TransformObjectToWorldNormal(extrudeN);
+#else
+    float3 normalWS = GetVertexNormalInputs(input.normalOS).normalWS;
+#endif
 
     output.positionCS = posInputs.positionCS;
     output.positionWS = posInputs.positionWS;
-    output.normalWS   = nrmInputs.normalWS;
+    output.normalWS   = normalWS;
     output.uv         = TRANSFORM_TEX(input.uv, _BaseMap);
     output.furUV      = TRANSFORM_TEX(input.uv, _FurMap);
     output.layer      = layer;

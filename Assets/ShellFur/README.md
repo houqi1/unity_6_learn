@@ -42,7 +42,26 @@ Extrusion uses smooth normals; lighting still uses mesh normals.
 
 **Skinned:** VC is not bone-skinned — with the toggle on, `ShellFurRenderer` re-bakes position-welded smooth normals after each `BakeMesh`.
 
-## Skinned mesh (animation)
+## GPU Skin Shell Fur (Scheme B — production skinned path)
+
+**Compute skins once → DrawMeshInstanced extrudes N shells** (no per-frame smooth recompute).
+
+1. Enable **Read/Write** on the character FBX (or use the build menu).
+2. Optional: **Tools → Shell Fur → Build GPU Skin Fur Mesh From Selection**  
+   - Creates a **separate DATA** `.asset` under `Assets/ShellFur/Meshes/`.  
+   - **Does not** replace `SkinnedMeshRenderer.sharedMesh` or shrink the character.  
+   - Do **not** assign that asset to SMR.Mesh — only to `Bind Fur Mesh Override` if you want.
+3. Add component **`ShellFurGpuSkinRenderer`** next to `SkinnedMeshRenderer`.
+4. Assign material using shader **`Custom/ShellFurGpuSkinned`**.
+5. Assign **Skin Compute** = `Assets/ShellFur/Shaders/ShellFurGpuSkin.compute`.
+6. Set **Fur Material Slots** (e.g. tails `1,2`), enable hide source slots / hide base as needed.
+7. Play animation — fur follows bones via GPU skinning.
+
+Design doc: `Docs/GPU-Skinning-ShellFur-Design.md`.
+
+Legacy BakeMesh path remains on **`ShellFurRenderer`**.
+
+## Skinned mesh (animation) — legacy BakeMesh
 
 Shells support **SkinnedMeshRenderer** with full animation via per-frame `BakeMesh`:
 
