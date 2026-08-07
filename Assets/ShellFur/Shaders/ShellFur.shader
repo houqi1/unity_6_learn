@@ -45,6 +45,10 @@ Shader "Custom/ShellFur"
         _RimPower ("Rim Power", Range(0.5, 8)) = 2.5
         _RimStrength ("Rim Strength", Range(0, 10)) = 0.25
         _ShadowStrength ("Self Shadow", Range(0, 10)) = 0.35
+        [Toggle(_USE_CUSTOM_LIGHT_DIR)] _UseCustomLightDir ("Use Custom Light Direction", Float) = 0
+        _CustomLightDir ("Custom Light Direction (WS)", Vector) = (0.35, 0.8, -0.45, 0)
+        [Toggle(_DEBUG_DIFFUSE)] _DebugDiffuse ("Output Lambert Only", Float) = 0
+        [Toggle(_DEBUG_NORMALS)] _DebugNormals ("Output Normals (WS)", Float) = 0
 
         [Header(Rendering)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 2
@@ -82,10 +86,14 @@ Shader "Custom/ShellFur"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile _ _FORWARD_PLUS
             #pragma multi_compile_fog
             #pragma shader_feature_local _USE_PROCEDURAL
             #pragma shader_feature_local _USE_KAJIYA_KAY
             #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
+            #pragma shader_feature_local _USE_CUSTOM_LIGHT_DIR
+            #pragma shader_feature_local _DEBUG_DIFFUSE
+            #pragma shader_feature_local _DEBUG_NORMALS
 
             #include "ShellFur.hlsl"
             ENDHLSL

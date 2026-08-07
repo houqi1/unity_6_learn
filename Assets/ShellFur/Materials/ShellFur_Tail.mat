@@ -8,10 +8,11 @@ Material:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_Name: ShellFur_Tail
-  m_Shader: {fileID: 4800000, guid: ab54417d7c7645deb721e6458a3c22a6, type: 3}
+  m_Shader: {fileID: 4800000, guid: 4d96efe5382a638439899bd680798e78, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
+  m_ValidKeywords:
+  - _USE_KAJIYA_KAY
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 1
@@ -56,9 +57,10 @@ Material:
     - _RimStrength: 2.93
     - _ShadowStrength: 0.119
     - _ShellCount: 32
-    - _Smoothness: 0.886
+    - _ShellLayerOffset: 0
+    - _Smoothness: 0.207
     - _Thickness: 0.556
-    - _UseKajiyaKay: 0
+    - _UseKajiyaKay: 1
     - _UseProcedural: 0
     - _UseSmoothNormalsVC: 0
     m_Colors:

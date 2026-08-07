@@ -4,6 +4,21 @@
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
+// Shell fur is drawn with Graphics.DrawMeshInstanced + MaterialPropertyBlock.
+// That path does not populate per-object unity_LightData the way MeshRenderer does.
+// URP GetMainLight() (non-Forward+) sets:
+//   distanceAttenuation = unity_LightData.z  // 1 = not culled, else 0
+// which is often 0 for instanced draws, killing main-light Lambert even though
+// globals _MainLightPosition / _MainLightColor are valid. Main light is a frame
+// global — force distance atten to 1 and keep realtime shadows.
+Light GetShellFurMainLight(float3 positionWS)
+{
+    float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
+    Light light = GetMainLight(shadowCoord);
+    light.distanceAttenuation = 1.0;
+    return light;
+}
+
 // ---------------------------------------------------------------------------
 // Properties
 // ---------------------------------------------------------------------------
@@ -31,6 +46,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _RimPower;
     float  _RimStrength;
     float  _ShadowStrength;
+    float4 _CustomLightDir;
     float  _FinSilhouetteSharpness;
     float  _FinExtrudeWeight;
     float  _FinSilhouetteBias;
@@ -44,6 +60,22 @@ CBUFFER_START(UnityPerMaterial)
     float  _FinOpacityFadeEnd;
     float  _FinOpacityPower;
 CBUFFER_END
+
+// Guide-strand bend samples (world-space offset vs straight hang + gravity).
+// Filled via MaterialPropertyBlock when dynamics is on — outside UnityPerMaterial.
+float4 _FurChain[9];
+float  _FurChainCount;
+float  _UseFurChain;
+
+float3 SampleFurChainBendWS(float layer)
+{
+    int count = (int)clamp(_FurChainCount, 1.0, 9.0);
+    float t = saturate(layer) * max((float)count - 1.0, 0.0);
+    int i0 = (int)floor(t);
+    int i1 = min(i0 + 1, count - 1);
+    float f = t - (float)i0;
+    return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
+}
 
 // ---------------------------------------------------------------------------
 // Hash / noise helpers (procedural strands)
@@ -96,14 +128,19 @@ float3 ResolveExtrudeNormalOS(float3 meshNormalOS, float4 vertexColor)
 
 float3 ApplyShellDisplacement(float3 positionOS, float3 extrudeNormalOS, float layer)
 {
-    // Quadratic bend so tips respond more than roots.
-    float layer2 = layer * layer;
+    // Radial extrusion along surface normal (per-vertex).
+    float3 offset = extrudeNormalOS * (layer * _FurLength);
 
-    // Gravity is authored in world space, then converted to object space
-    // so rotated meshes still droop "down" in the world.
-    float3 gravityWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * _FurLength);
-    float3 bendOS = TransformWorldToObjectDir(gravityWS, false);
-    float3 offset = extrudeNormalOS * (layer * _FurLength) + bendOS;
+    // Bend: guide chain samples (dynamics) or legacy quadratic gravity.
+    float3 bendWS;
+    if (_UseFurChain > 0.5)
+        bendWS = SampleFurChainBendWS(layer);
+    else
+    {
+        float layer2 = layer * layer;
+        bendWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * _FurLength);
+    }
+    offset += TransformWorldToObjectDir(bendWS, false);
     return positionOS + offset;
 }
 
@@ -189,27 +226,47 @@ half3 ShadeShellFur(float3 positionWS, float3 normalWS, float2 uv, float layer, 
     albedo *= lerp(1.0 - _ShadowStrength, 1.0, layer01);
 
     float3 n = NormalizeNormalPerPixel(normalWS);
-    float3 v = GetWorldSpaceNormalizeViewDir(positionWS);
 
-    // Main light (with shadows when available).
-    float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
-    Light mainLight = GetMainLight(shadowCoord);
-    half NdotL = saturate(dot(n, mainLight.direction));
-    half3 lighting = mainLight.color * (mainLight.shadowAttenuation * mainLight.distanceAttenuation * NdotL);
+    // Debug: world-space normals remapped to 0..1 (RGB = n*0.5+0.5). Highest priority.
+#if defined(_DEBUG_NORMALS)
+    return n * 0.5 + 0.5;
+#endif
 
-    // Ambient from SH.
-    half3 ambient = SampleSH(n) * ao;
-    half3 color = albedo * (ambient + lighting);
+    // Main light: direction/color from URP globals; see GetShellFurMainLight().
+    Light mainLight = GetShellFurMainLight(positionWS);
 
-#if defined(_ADDITIONAL_LIGHTS)
+    // Light direction: URP main light, or material custom world-space direction.
+#if defined(_USE_CUSTOM_LIGHT_DIR)
+    float3 lightDirWS = normalize(_CustomLightDir.xyz + 1e-5);
+    half mainAtten = 1.0; // custom dir is unbounded; do not inherit main-light shadows
+#else
+    float3 lightDirWS = mainLight.direction;
+    half mainAtten = mainLight.shadowAttenuation * mainLight.distanceAttenuation;
+#endif
+
+    half NdotL = saturate(dot(n, lightDirWS));
+    half3 lambert = mainLight.color * (mainAtten * NdotL);
+
+#if defined(_ADDITIONAL_LIGHTS) && !defined(_USE_CUSTOM_LIGHT_DIR)
     uint lightsCount = GetAdditionalLightsCount();
     for (uint lightIndex = 0u; lightIndex < lightsCount; ++lightIndex)
     {
         Light light = GetAdditionalLight(lightIndex, positionWS);
         half addNdotL = saturate(dot(n, light.direction));
-        color += albedo * light.color * (light.distanceAttenuation * light.shadowAttenuation * addNdotL);
+        lambert += light.color * (light.distanceAttenuation * light.shadowAttenuation * addNdotL);
     }
 #endif
+
+    // Debug: pure Lambert only (Σ lightColor * atten * saturate(N·L)). No albedo/AO/ambient/rim/spec.
+#if defined(_DEBUG_DIFFUSE)
+    return lambert;
+#endif
+
+    // Ambient from SH.
+    half3 ambient = SampleSH(n) * ao;
+    half3 color = albedo * (ambient + lambert);
+
+    float3 v = GetWorldSpaceNormalizeViewDir(positionWS);
 
     // Soft rim to lift silhouettes.
     float ndotv = saturate(dot(n, v));
@@ -217,7 +274,7 @@ half3 ShadeShellFur(float3 positionWS, float3 normalWS, float2 uv, float layer, 
     color += tipColor * rim;
 
     // Specular: Blinn-Phong (default) or Kajiya-Kay (hair fiber along shell normal).
-    float3 L = mainLight.direction;
+    float3 L = lightDirWS;
     float specExp = lerp(8.0, 64.0, saturate(_Smoothness));
     float spec = 0.0;
 
@@ -238,7 +295,7 @@ half3 ShadeShellFur(float3 positionWS, float3 normalWS, float2 uv, float layer, 
     spec = pow(abs(saturate(dot(n, h))), max(specExp, 1e-3)) * _Smoothness;
 #endif
 
-    color += spec * mainLight.color * mainLight.shadowAttenuation * tipColor;
+    color += spec * mainLight.color * mainAtten * tipColor;
 
     return color;
 }
@@ -509,10 +566,16 @@ float3 ApplyFinDisplacement(float3 baseOS, float3 upOS, float height01, float si
     float3 up = normalize(upOS + 1e-5);
     float3 pos = baseOS + up * (len * h + rootLift);
 
-    // Gravity increases with height (quadratic) — intermediate segment rows create a visible arc.
-    float layer2 = h * h;
-    float3 gravityWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * len);
-    pos += TransformWorldToObjectDir(gravityWS, false);
+    // Bend along fin height: guide chain or legacy h² gravity.
+    float3 bendWS;
+    if (_UseFurChain > 0.5)
+        bendWS = SampleFurChainBendWS(saturate(height01));
+    else
+    {
+        float layer2 = h * h;
+        bendWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * len);
+    }
+    pos += TransformWorldToObjectDir(bendWS, false);
     return pos;
 }
 
@@ -558,7 +621,7 @@ FinVaryings ShellFurFinVert(FinAttributes input)
     float3 baseWS = TransformObjectToWorld(input.positionOS.xyz);
     float sil = ComputeFinSilhouette(baseWS, input.faceA, input.faceB);
 
-    float height01 = input.height.x;
+    float height01 = saturate(input.height.x);
     float3 posOS = ApplyFinDisplacement(input.positionOS.xyz, input.normalOS, height01, sil);
 
     // Degenerate non-silhouette fins (tips collapse to base).
@@ -570,7 +633,8 @@ FinVaryings ShellFurFinVert(FinAttributes input)
     output.normalWS   = normalWS;
     output.uv         = TRANSFORM_TEX(input.uv, _BaseMap);
     output.furUV      = TRANSFORM_TEX(input.uv, _FurMap);
-    output.layer      = height01 * sil; // effective shell height for mask/lighting
+    // Mask/density: view-weighted height. Color uses pure height01 (shell-like root→tip).
+    output.layer      = height01 * sil;
     output.fogFactor  = ComputeFogFactor(posInputs.positionCS.z);
     output.silhouette = sil;
     output.height01   = height01;
@@ -586,9 +650,9 @@ half4 ShellFurFinFrag(FinVaryings input) : SV_Target
     float alpha;
     float strandHeight;
     // Use max(layer, small) so root of fin still samples density taper.
-    float layer = max(input.layer, 0.02);
+    float maskLayer = max(input.layer, 0.02);
     // Density / procedural pattern still hard-masks holes (no partial strand coverage).
-    if (!EvaluateFurMask(input.furUV, layer, alpha, strandHeight))
+    if (!EvaluateFurMask(input.furUV, maskLayer, alpha, strandHeight))
         discard;
 
     alpha *= saturate(input.silhouette);
@@ -603,7 +667,8 @@ half4 ShellFurFinFrag(FinVaryings input) : SV_Target
     clip(alpha - 0.01);
 #endif
 
-    half3 color = ShadeShellFur(input.positionWS, input.normalWS, input.uv, layer, strandHeight);
+    // Root→tip color uses pure height01 (same role as shell layer), not silhouette-scaled layer.
+    half3 color = ShadeShellFur(input.positionWS, input.normalWS, input.uv, input.height01, strandHeight);
     color = MixFog(color, input.fogFactor);
     return half4(color, alpha);
 }

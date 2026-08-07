@@ -2,10 +2,11 @@ using UnityEngine;
 using UnityEngine.Rendering;
 
 /// <summary>
-/// GPU-skinning shell fur (Scheme B, tier 2):
+/// GPU-skinning shell fur (Scheme B) + CS silhouette fins (B2 / true GS migration):
 /// 1) Upload bone matrices from SkinnedMeshRenderer
-/// 2) Compute shader skins bind-pose fur verts once (world space)
-/// 3) DrawMeshInstanced N shell layers reading the skinned buffer (extrude only)
+/// 2) Compute skins bind-pose fur verts once (world space)
+/// 3) DrawMeshInstanced N shell layers from skinned buffer
+/// 4) Per camera: CS tests silhouette edges → compact fin triangle list → DrawProceduralIndirect
 ///
 /// SMR is not used to draw fur — only bones + source mesh data.
 /// </summary>
@@ -14,18 +15,48 @@ using UnityEngine.Rendering;
 public class ShellFurGpuSkinRenderer : MonoBehaviour
 {
     public const string ShaderName = "Custom/ShellFurGpuSkinned";
+    public const string FinShaderName = "Custom/ShellFurGpuFin";
     const int MaxShells = 128;
+    const int MinFinSegments = 1;
+    const int MaxFinSegments = 16;
 
     static readonly int ShellCountId = Shader.PropertyToID("_ShellCount");
     static readonly int ShellLayerOffsetId = Shader.PropertyToID("_ShellLayerOffset");
     static readonly int FurLengthId = Shader.PropertyToID("_FurLength");
     static readonly int GravityId = Shader.PropertyToID("_Gravity");
     static readonly int GravityDirId = Shader.PropertyToID("_GravityDir");
+    static readonly int FurChainId = Shader.PropertyToID("_FurChain");
+    static readonly int FurChainCountId = Shader.PropertyToID("_FurChainCount");
+    static readonly int UseFurChainId = Shader.PropertyToID("_UseFurChain");
     static readonly int SkinnedVerticesId = Shader.PropertyToID("_SkinnedVertices");
     static readonly int BindVerticesId = Shader.PropertyToID("_BindVertices");
     static readonly int BoneMatricesId = Shader.PropertyToID("_BoneMatrices");
     static readonly int VertexCountId = Shader.PropertyToID("_VertexCount");
     static readonly int BoneCountId = Shader.PropertyToID("_BoneCount");
+
+    static readonly int FinEdgesId = Shader.PropertyToID("_FinEdges");
+    static readonly int FinVerticesId = Shader.PropertyToID("_FinVertices");
+    static readonly int FinCounterId = Shader.PropertyToID("_FinCounter");
+    static readonly int FinDrawArgsId = Shader.PropertyToID("_FinDrawArgs");
+    static readonly int FinEdgeCountId = Shader.PropertyToID("_FinEdgeCount");
+    static readonly int FinSegmentsId = Shader.PropertyToID("_FinSegments");
+    static readonly int FinMaxVerticesId = Shader.PropertyToID("_FinMaxVertices");
+    static readonly int FinCameraPosId = Shader.PropertyToID("_FinCameraPos");
+    static readonly int FinLengthScaleId = Shader.PropertyToID("_FinLengthScale");
+    static readonly int FinExtrudeWeightId = Shader.PropertyToID("_FinExtrudeWeight");
+    static readonly int FinSharpId = Shader.PropertyToID("_FinSilhouetteSharpness");
+    static readonly int FinBiasId = Shader.PropertyToID("_FinSilhouetteBias");
+    static readonly int FinPowerId = Shader.PropertyToID("_FinSilhouettePower");
+    static readonly int FinBandId = Shader.PropertyToID("_FinBandStrength");
+    static readonly int FinRootOffsetId = Shader.PropertyToID("_FinRootOffset");
+    static readonly int FinMinSilhouetteId = Shader.PropertyToID("_FinMinSilhouette");
+    static readonly int FinRootOpacityId = Shader.PropertyToID("_FinRootOpacity");
+    static readonly int FinTipOpacityId = Shader.PropertyToID("_FinTipOpacity");
+    static readonly int FinOpacityFadeStartId = Shader.PropertyToID("_FinOpacityFadeStart");
+    static readonly int FinOpacityFadeEndId = Shader.PropertyToID("_FinOpacityFadeEnd");
+    static readonly int FinOpacityPowerId = Shader.PropertyToID("_FinOpacityPower");
+    static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+    static readonly int TipColorId = Shader.PropertyToID("_TipColor");
 
     [Header("Source (bones + mesh only)")]
     [SerializeField] SkinnedMeshRenderer sourceSkinned;
@@ -50,43 +81,110 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     [Range(1f, 180f)]
     [SerializeField] float smoothNormalMaxAngle = 180f;
 
+    [Header("Fins (CS B2 — silhouette emit)")]
+    [SerializeField] bool enableFins = true;
+    [Tooltip("When on: still draw shell layer 0 (or hide-base offset) but skip multi-layer shells; fins still emit.")]
+    [SerializeField] bool finsOnly = false;
+    [Range(MinFinSegments, MaxFinSegments)]
+    [SerializeField] int finSegments = 4;
+    [Range(0f, 2f)]
+    [SerializeField] float finExtrudeWeight = 1f;
+    [Range(0.5f, 32f)]
+    [SerializeField] float finSilhouetteSharpness = 8f;
+    [Range(0f, 1f)]
+    [SerializeField] float finSilhouetteBias = 0f;
+    [Range(0.25f, 4f)]
+    [SerializeField] float finSilhouettePower = 1f;
+    [Range(0f, 2f)]
+    [SerializeField] float finBandStrength = 0.4f;
+    [Range(0f, 0.02f)]
+    [SerializeField] float finRootOffset = 0.0015f;
+    [Range(0.25f, 2f)]
+    [SerializeField] float finLengthScale = 1f;
+    [Tooltip("CS only emits a fin when silhouette weight exceeds this (true GS-style cull).")]
+    [Range(0.0001f, 0.2f)]
+    [SerializeField] float finMinSilhouette = 0.001f;
+    [Range(0.99f, 1f)]
+    [SerializeField] float finSkipCoplanarDot = 0.9998f;
+    [Header("Fin Opacity (root → tip)")]
+    [Range(0f, 1f)]
+    [SerializeField] float finRootOpacity = 1f;
+    [Range(0f, 1f)]
+    [SerializeField] float finTipOpacity = 0f;
+    [Range(0f, 1f)]
+    [SerializeField] float finOpacityFadeStart = 0f;
+    [Range(0f, 1f)]
+    [SerializeField] float finOpacityFadeEnd = 1f;
+    [Range(0.25f, 4f)]
+    [SerializeField] float finOpacityPower = 1f;
+    [SerializeField] bool finCastShadows = true;
+    [SerializeField] Material finMaterialOverride;
+
     [Header("Physics")]
     [SerializeField] float gravityStrength = 0.35f;
     [SerializeField] Vector3 gravityDirection = Vector3.down;
+
+    [Header("Dynamics (guide strand: root pinned to object)")]
+    [Tooltip("Root = strand base; free nodes Spring/Verlet; shells/fins sample chain by height.")]
+    [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     [Header("Rendering")]
     [SerializeField] ShadowCastingMode shadowCasting = ShadowCastingMode.On;
     [SerializeField] bool receiveShadows = true;
     [SerializeField] bool drawInEditMode = true;
     [SerializeField] ComputeShader skinCompute;
+    [SerializeField] ComputeShader finCompute;
 
     [Header("Debug")]
     [SerializeField] bool logOnce;
 
+    bool _dynamicsSteppedThisFrame;
+    int _dynamicsStepFrame = -1;
+
     SkinnedMeshRenderer _smr;
     Mesh _bindMesh;
     ShellFurGpuSkinTypes.BindVertex[] _bindVerts;
+    ShellFurGpuSkinTypes.FinEdge[] _finEdges;
     GraphicsBuffer _bindBuffer;
     GraphicsBuffer _skinnedBuffer;
+    GraphicsBuffer _finEdgeBuffer;
+    GraphicsBuffer _finVertexBuffer;
+    GraphicsBuffer _finCounterBuffer;
+    GraphicsBuffer _finArgsBuffer;
     ShellFurBoneBuffer _boneBuffer;
     MaterialPropertyBlock _mpb;
+    MaterialPropertyBlock _mpbFin;
     Matrix4x4[] _instanceMatrices;
     Material _ownedMaterial;
+    Material _ownedFinMaterial;
     Material _runtimeFurMat;
+    Material _runtimeFinMat;
     static Material _skipMat;
     Material[] _originalShared;
     bool _hijacked;
     int _lastPrepareFrame = -1;
+    int _lastFinCameraFrame = -1;
+    int _lastFinCameraId = int.MinValue;
     bool _logged;
+    bool _loggedFin;
     bool _ready;
-    int _kernel = -1;
+    bool _finsReady;
+    int _kernelSkin = -1;
+    int _kernelReset = -1;
+    int _kernelGenFins = -1;
+    int _kernelFinalize = -1;
+    int _finMaxVertices;
+    int _finEdgeCount;
+    int _finSegmentsBuilt = -1;
 
     public bool IsReady => _ready;
+    public bool FinsReady => _finsReady;
+    public int FinEdgeCount => _finEdgeCount;
 
     void OnEnable()
     {
         CacheRefs();
-        EnsureMaterial();
+        EnsureMaterials();
         RebuildBindData();
         ApplySourceRendererState();
         RenderPipelineManager.beginCameraRendering += OnBeginCamera;
@@ -97,39 +195,123 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         RenderPipelineManager.beginCameraRendering -= OnBeginCamera;
         RestoreSourceRendererState();
         ReleaseGpu();
+        dynamics?.ResetState();
+        _dynamicsSteppedThisFrame = false;
+        _dynamicsStepFrame = -1;
+    }
+
+    void LateUpdate()
+    {
+        StepDynamicsIfNeeded();
+    }
+
+    void StepDynamicsIfNeeded()
+    {
+        if (dynamics == null)
+            return;
+
+        int frame = Time.frameCount;
+        if (_dynamicsStepFrame == frame && _dynamicsSteppedThisFrame)
+            return;
+
+        float dt = Application.isPlaying ? Time.deltaTime : Time.unscaledDeltaTime;
+        if (dt <= 1e-6f)
+            dt = 1f / 60f;
+
+        Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
+        Transform t = _smr != null ? _smr.transform : transform;
+        dynamics.Evaluate(t.position, gDir, gravityStrength, furLength, dt);
+        _dynamicsStepFrame = frame;
+        _dynamicsSteppedThisFrame = true;
+    }
+
+    void ApplyPhysicsToMpb(MaterialPropertyBlock mpb)
+    {
+        if (mpb == null)
+            return;
+
+        Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
+        mpb.SetFloat(GravityId, gravityStrength);
+        mpb.SetVector(GravityDirId, gDir);
+
+        if (dynamics != null && dynamics.enabled)
+        {
+            if (!_dynamicsSteppedThisFrame || _dynamicsStepFrame != Time.frameCount)
+                StepDynamicsIfNeeded();
+        }
+
+        bool useChain = dynamics != null && dynamics.enabled && dynamics.HasSamples;
+        if (useChain)
+        {
+            mpb.SetFloat(UseFurChainId, 1f);
+            mpb.SetFloat(FurChainCountId, dynamics.SampleCount);
+            mpb.SetVectorArray(FurChainId, dynamics.BendSamples);
+        }
+        else
+        {
+            mpb.SetFloat(UseFurChainId, 0f);
+            mpb.SetFloat(FurChainCountId, 0f);
+        }
+    }
+
+    void ApplyPhysicsToCompute()
+    {
+        if (finCompute == null)
+            return;
+
+        Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
+        finCompute.SetFloat(GravityId, gravityStrength);
+        finCompute.SetVector(GravityDirId, gDir);
+
+        if (dynamics != null && dynamics.enabled)
+        {
+            if (!_dynamicsSteppedThisFrame || _dynamicsStepFrame != Time.frameCount)
+                StepDynamicsIfNeeded();
+        }
+
+        bool useChain = dynamics != null && dynamics.enabled && dynamics.HasSamples;
+        finCompute.SetFloat(UseFurChainId, useChain ? 1f : 0f);
+        finCompute.SetFloat(FurChainCountId, useChain ? dynamics.SampleCount : 0f);
+        if (useChain)
+            finCompute.SetVectorArray(FurChainId, dynamics.BendSamples);
     }
 
     void OnDestroy()
     {
         RestoreSourceRendererState();
         ReleaseGpu();
-        if (_ownedMaterial != null)
-        {
-            if (Application.isPlaying) Destroy(_ownedMaterial);
-            else DestroyImmediate(_ownedMaterial);
-        }
+        DestroyOwned(_ownedMaterial);
+        DestroyOwned(_ownedFinMaterial);
+        _ownedMaterial = null;
+        _ownedFinMaterial = null;
         if (_bindMesh != null && bindFurMeshOverride == null)
-        {
-            if (Application.isPlaying) Destroy(_bindMesh);
-            else DestroyImmediate(_bindMesh);
-        }
+            DestroyOwned(_bindMesh);
+    }
+
+    static void DestroyOwned(Object o)
+    {
+        if (o == null) return;
+        if (Application.isPlaying) Destroy(o);
+        else DestroyImmediate(o);
     }
 
     void OnValidate()
     {
         shellCount = Mathf.Clamp(shellCount, 2, MaxShells);
         furLength = Mathf.Max(0.001f, furLength);
+        finSegments = Mathf.Clamp(finSegments, MinFinSegments, MaxFinSegments);
         if (furMaterialSlots == null || furMaterialSlots.Length == 0)
             furMaterialSlots = new[] { 0 };
         CacheRefs();
         ApplySourceRendererState();
     }
 
-    [ContextMenu("Rebuild GPU Skin Bind Mesh")]
+    [ContextMenu("Rebuild GPU Skin Bind Mesh + Fin Edges")]
     public void RebuildBindData()
     {
         ReleaseGpu();
         _ready = false;
+        _finsReady = false;
         CacheRefs();
 
         if (_smr == null || _smr.sharedMesh == null)
@@ -150,7 +332,6 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (bindFurMeshOverride != null)
         {
             _bindMesh = bindFurMeshOverride;
-            // Rebuild bind vertex array from override mesh channels
             _bindVerts = ExtractBindVerticesFromMesh(_bindMesh);
         }
         else
@@ -177,10 +358,11 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         _boneBuffer = new ShellFurBoneBuffer();
         _boneBuffer.Ensure(source.bindposes != null ? source.bindposes.Length : 1);
 
-        if (skinCompute != null)
-            _kernel = skinCompute.FindKernel("CSSkin");
+        EnsureSkinKernel();
+        BuildFinGpuResources();
 
         _mpb = new MaterialPropertyBlock();
+        _mpbFin = new MaterialPropertyBlock();
         _instanceMatrices = new Matrix4x4[MaxShells];
         for (int i = 0; i < MaxShells; i++)
             _instanceMatrices[i] = Matrix4x4.identity;
@@ -188,9 +370,99 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         _ready = true;
         if (logOnce && !_logged)
         {
-            Debug.Log($"[{nameof(ShellFurGpuSkinRenderer)}] Ready verts={vcount} bones={source.bindposes?.Length} mesh={_bindMesh.name}", this);
+            Debug.Log(
+                $"[{nameof(ShellFurGpuSkinRenderer)}] Ready verts={vcount} edges={_finEdgeCount} maxFinVerts={_finMaxVertices} bones={source.bindposes?.Length}",
+                this);
             _logged = true;
         }
+    }
+
+    void BuildFinGpuResources()
+    {
+        ReleaseBuffer(ref _finEdgeBuffer);
+        ReleaseBuffer(ref _finVertexBuffer);
+        ReleaseBuffer(ref _finCounterBuffer);
+        ReleaseBuffer(ref _finArgsBuffer);
+
+        _finsReady = false;
+        _finEdges = null;
+        _finEdgeCount = 0;
+        _finMaxVertices = 0;
+        _finSegmentsBuilt = -1;
+
+        if (!enableFins || _bindMesh == null)
+            return;
+
+        int segs = Mathf.Clamp(finSegments, MinFinSegments, MaxFinSegments);
+        _finEdges = ShellFurFinEdgeBuilder.Build(_bindMesh, finSkipCoplanarDot);
+        if (_finEdges == null || _finEdges.Length == 0)
+        {
+            if (logOnce && !_loggedFin)
+            {
+                Debug.LogWarning($"[{nameof(ShellFurGpuSkinRenderer)}] No fin edges built for '{_bindMesh.name}'.", this);
+                _loggedFin = true;
+            }
+            return;
+        }
+
+        _finEdgeCount = _finEdges.Length;
+        _finMaxVertices = _finEdgeCount * segs * 6;
+        _finSegmentsBuilt = segs;
+
+        _finEdgeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _finEdgeCount, ShellFurGpuSkinTypes.FinEdge.Stride);
+        _finEdgeBuffer.SetData(_finEdges);
+
+        _finVertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, Mathf.Max(1, _finMaxVertices), ShellFurGpuSkinTypes.FinVertex.Stride);
+        _finCounterBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(uint));
+        _finArgsBuffer = new GraphicsBuffer(
+            GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured,
+            4,
+            sizeof(uint));
+        _finArgsBuffer.SetData(new uint[] { 0, 1, 0, 0 });
+
+        EnsureFinKernels();
+        EnsureFinMaterial();
+        _finsReady = _kernelGenFins >= 0 && finCompute != null && _runtimeFinMat != null;
+
+        if (logOnce && !_loggedFin)
+        {
+            Debug.Log(
+                $"[{nameof(ShellFurGpuSkinRenderer)}] Fin B2 ready edges={_finEdgeCount} segs={segs} maxVerts={_finMaxVertices} kernelsOK={_finsReady}",
+                this);
+            _loggedFin = true;
+        }
+    }
+
+    void EnsureSkinKernel()
+    {
+        _kernelSkin = -1;
+        if (skinCompute == null)
+        {
+#if UNITY_EDITOR
+            skinCompute = UnityEditor.AssetDatabase.LoadAssetAtPath<ComputeShader>(
+                "Assets/ShellFur/Shaders/ShellFurGpuSkin.compute");
+#endif
+        }
+        if (skinCompute != null)
+            _kernelSkin = skinCompute.FindKernel("CSSkin");
+    }
+
+    void EnsureFinKernels()
+    {
+        _kernelReset = _kernelGenFins = _kernelFinalize = -1;
+        if (finCompute == null)
+        {
+#if UNITY_EDITOR
+            finCompute = UnityEditor.AssetDatabase.LoadAssetAtPath<ComputeShader>(
+                "Assets/ShellFur/Shaders/ShellFurGpuFin.compute");
+#endif
+        }
+        if (finCompute == null)
+            return;
+
+        _kernelReset = finCompute.FindKernel("CSResetFinCounter");
+        _kernelGenFins = finCompute.FindKernel("CSGenerateFins");
+        _kernelFinalize = finCompute.FindKernel("CSFinalizeFinArgs");
     }
 
     static ShellFurGpuSkinTypes.BindVertex[] ExtractBindVerticesFromMesh(Mesh mesh)
@@ -229,19 +501,28 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
             if (_smr == null)
                 _smr = GetComponentInChildren<SkinnedMeshRenderer>();
         }
-
-        if (skinCompute == null)
-            skinCompute = Resources.Load<ComputeShader>("ShellFurGpuSkin");
-        // Also try direct asset path load in editor via Shader - compute assigned in inspector preferably
     }
 
-    void EnsureMaterial()
+    void EnsureMaterials()
+    {
+        EnsureFurMaterial();
+        EnsureFinMaterial();
+    }
+
+    void EnsureFurMaterial()
     {
         if (furMaterial != null)
         {
             if (!furMaterial.enableInstancing)
                 furMaterial.enableInstancing = true;
             _runtimeFurMat = furMaterial;
+            return;
+        }
+
+        if (_ownedMaterial != null)
+        {
+            _runtimeFurMat = _ownedMaterial;
+            furMaterial = _ownedMaterial;
             return;
         }
 
@@ -259,6 +540,61 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         _runtimeFurMat = _ownedMaterial;
     }
 
+    void EnsureFinMaterial()
+    {
+        if (finMaterialOverride != null)
+        {
+            _runtimeFinMat = finMaterialOverride;
+            return;
+        }
+
+        if (_ownedFinMaterial != null)
+        {
+            _runtimeFinMat = _ownedFinMaterial;
+            return;
+        }
+
+        Shader sh = Shader.Find(FinShaderName);
+        if (sh == null)
+            return;
+
+        _ownedFinMaterial = new Material(sh)
+        {
+            name = "ShellFurGpuFin (Runtime)",
+            hideFlags = HideFlags.HideAndDontSave
+        };
+        _ownedFinMaterial.SetFloat("_Cull", 0f);
+        _runtimeFinMat = _ownedFinMaterial;
+        CopyShellLookToFin(_runtimeFinMat);
+    }
+
+    void CopyShellLookToFin(Material fin)
+    {
+        if (fin == null)
+            return;
+        Material src = _runtimeFurMat != null ? _runtimeFurMat : furMaterial;
+        if (src == null)
+            return;
+
+        if (src.HasProperty("_BaseColor")) fin.SetColor("_BaseColor", src.GetColor("_BaseColor"));
+        if (src.HasProperty("_TipColor")) fin.SetColor("_TipColor", src.GetColor("_TipColor"));
+        if (src.HasProperty("_BaseMap")) fin.SetTexture("_BaseMap", src.GetTexture("_BaseMap"));
+        if (src.HasProperty("_FurMap")) fin.SetTexture("_FurMap", src.GetTexture("_FurMap"));
+        if (src.HasProperty("_Density")) fin.SetFloat("_Density", src.GetFloat("_Density"));
+        if (src.HasProperty("_Thickness")) fin.SetFloat("_Thickness", src.GetFloat("_Thickness"));
+        if (src.HasProperty("_Occlusion")) fin.SetFloat("_Occlusion", src.GetFloat("_Occlusion"));
+        if (src.HasProperty("_AlphaCutoff")) fin.SetFloat("_AlphaCutoff", src.GetFloat("_AlphaCutoff"));
+        if (src.HasProperty("_FurLengthRandom")) fin.SetFloat("_FurLengthRandom", src.GetFloat("_FurLengthRandom"));
+        if (src.HasProperty("_Smoothness")) fin.SetFloat("_Smoothness", src.GetFloat("_Smoothness"));
+        if (src.HasProperty("_RimPower")) fin.SetFloat("_RimPower", src.GetFloat("_RimPower"));
+        if (src.HasProperty("_RimStrength")) fin.SetFloat("_RimStrength", src.GetFloat("_RimStrength"));
+        if (src.HasProperty("_ShadowStrength")) fin.SetFloat("_ShadowStrength", src.GetFloat("_ShadowStrength"));
+        if (src.IsKeywordEnabled("_USE_PROCEDURAL")) fin.EnableKeyword("_USE_PROCEDURAL");
+        else fin.DisableKeyword("_USE_PROCEDURAL");
+        if (src.IsKeywordEnabled("_USE_KAJIYA_KAY")) fin.EnableKeyword("_USE_KAJIYA_KAY");
+        else fin.DisableKeyword("_USE_KAJIYA_KAY");
+    }
+
     void ApplySourceRendererState()
     {
         if (_smr == null)
@@ -272,7 +608,6 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         else if (!useMaterialSlotOnly)
         {
             RestoreSlots();
-            // Full fur replacement: hide SMR mesh draw
             _smr.enabled = false;
         }
         else
@@ -339,14 +674,26 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     {
         _boneBuffer?.Dispose();
         _boneBuffer = null;
-        _bindBuffer?.Release();
-        _bindBuffer = null;
-        _skinnedBuffer?.Release();
-        _skinnedBuffer = null;
+        ReleaseBuffer(ref _bindBuffer);
+        ReleaseBuffer(ref _skinnedBuffer);
+        ReleaseBuffer(ref _finEdgeBuffer);
+        ReleaseBuffer(ref _finVertexBuffer);
+        ReleaseBuffer(ref _finCounterBuffer);
+        ReleaseBuffer(ref _finArgsBuffer);
         _ready = false;
+        _finsReady = false;
+        _lastPrepareFrame = -1;
+        _lastFinCameraFrame = -1;
     }
 
-    void PrepareFrame()
+    static void ReleaseBuffer(ref GraphicsBuffer buf)
+    {
+        if (buf == null) return;
+        buf.Release();
+        buf = null;
+    }
+
+    void PrepareSkinFrame()
     {
         int frame = Time.frameCount;
         if (_lastPrepareFrame == frame)
@@ -358,21 +705,9 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (!_ready || _smr == null || _bindMesh == null)
             return;
 
-        if (skinCompute == null || _kernel < 0)
-        {
-            // Try load compute by name from project
-            #if UNITY_EDITOR
-            if (skinCompute == null)
-            {
-                skinCompute = UnityEditor.AssetDatabase.LoadAssetAtPath<ComputeShader>(
-                    "Assets/ShellFur/Shaders/ShellFurGpuSkin.compute");
-                if (skinCompute != null)
-                    _kernel = skinCompute.FindKernel("CSSkin");
-            }
-            #endif
-            if (skinCompute == null || _kernel < 0)
-                return;
-        }
+        EnsureSkinKernel();
+        if (skinCompute == null || _kernelSkin < 0)
+            return;
 
         Mesh skinMesh = _smr.sharedMesh;
         if (!_boneBuffer.UpdateFrom(_smr, skinMesh))
@@ -381,12 +716,87 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         int vcount = _bindVerts.Length;
         skinCompute.SetInt(VertexCountId, vcount);
         skinCompute.SetInt(BoneCountId, _boneBuffer.BoneCount);
-        skinCompute.SetBuffer(_kernel, BindVerticesId, _bindBuffer);
-        skinCompute.SetBuffer(_kernel, BoneMatricesId, _boneBuffer.Buffer);
-        skinCompute.SetBuffer(_kernel, SkinnedVerticesId, _skinnedBuffer);
+        skinCompute.SetBuffer(_kernelSkin, BindVerticesId, _bindBuffer);
+        skinCompute.SetBuffer(_kernelSkin, BoneMatricesId, _boneBuffer.Buffer);
+        skinCompute.SetBuffer(_kernelSkin, SkinnedVerticesId, _skinnedBuffer);
 
         int groups = Mathf.CeilToInt(vcount / 64f);
-        skinCompute.Dispatch(_kernel, Mathf.Max(1, groups), 1, 1);
+        skinCompute.Dispatch(_kernelSkin, Mathf.Max(1, groups), 1, 1);
+    }
+
+    void EnsureFinCapacityMatchesSegments()
+    {
+        if (!enableFins || !_ready)
+            return;
+        int segs = Mathf.Clamp(finSegments, MinFinSegments, MaxFinSegments);
+        if (_finSegmentsBuilt == segs && _finsReady)
+            return;
+
+        // Rebuild only fin buffers when segment count changes.
+        ReleaseBuffer(ref _finEdgeBuffer);
+        ReleaseBuffer(ref _finVertexBuffer);
+        ReleaseBuffer(ref _finCounterBuffer);
+        ReleaseBuffer(ref _finArgsBuffer);
+        BuildFinGpuResources();
+    }
+
+    void GenerateFinsForCamera(Camera camera)
+    {
+        if (!enableFins || !_ready || camera == null)
+            return;
+
+        // Lazy build when fins were off at first Rebuild, or compute asset was late-assigned.
+        if (!_finsReady || _finEdgeBuffer == null)
+            BuildFinGpuResources();
+        if (!_finsReady || finCompute == null || _kernelGenFins < 0 || _finVertexBuffer == null)
+            return;
+
+        // One fin rebuild per camera per frame (game + scene view each get correct silhouette).
+        int camId = camera.GetInstanceID();
+        int frame = Time.frameCount;
+        if (_lastFinCameraFrame == frame && _lastFinCameraId == camId)
+            return;
+        _lastFinCameraFrame = frame;
+        _lastFinCameraId = camId;
+
+        EnsureFinCapacityMatchesSegments();
+        if (!_finsReady)
+            return;
+
+        int segs = Mathf.Clamp(finSegments, MinFinSegments, MaxFinSegments);
+
+        finCompute.SetInt(FinEdgeCountId, _finEdgeCount);
+        finCompute.SetInt(FinSegmentsId, segs);
+        finCompute.SetInt(FinMaxVerticesId, _finMaxVertices);
+        finCompute.SetVector(FinCameraPosId, camera.transform.position);
+        finCompute.SetFloat(FurLengthId, furLength);
+        finCompute.SetFloat(FinLengthScaleId, finLengthScale);
+        finCompute.SetFloat(FinExtrudeWeightId, finExtrudeWeight);
+        finCompute.SetFloat(FinSharpId, finSilhouetteSharpness);
+        finCompute.SetFloat(FinBiasId, finSilhouetteBias);
+        finCompute.SetFloat(FinPowerId, finSilhouettePower);
+        finCompute.SetFloat(FinBandId, finBandStrength);
+        finCompute.SetFloat(FinRootOffsetId, finRootOffset);
+        finCompute.SetFloat(FinMinSilhouetteId, finMinSilhouette);
+        ApplyPhysicsToCompute();
+
+        // Reset
+        finCompute.SetBuffer(_kernelReset, FinCounterId, _finCounterBuffer);
+        finCompute.Dispatch(_kernelReset, 1, 1, 1);
+
+        // Generate
+        finCompute.SetBuffer(_kernelGenFins, SkinnedVerticesId, _skinnedBuffer);
+        finCompute.SetBuffer(_kernelGenFins, FinEdgesId, _finEdgeBuffer);
+        finCompute.SetBuffer(_kernelGenFins, FinVerticesId, _finVertexBuffer);
+        finCompute.SetBuffer(_kernelGenFins, FinCounterId, _finCounterBuffer);
+        int groups = Mathf.CeilToInt(_finEdgeCount / 64f);
+        finCompute.Dispatch(_kernelGenFins, Mathf.Max(1, groups), 1, 1);
+
+        // Args
+        finCompute.SetBuffer(_kernelFinalize, FinCounterId, _finCounterBuffer);
+        finCompute.SetBuffer(_kernelFinalize, FinDrawArgsId, _finArgsBuffer);
+        finCompute.SetInt(FinMaxVerticesId, _finMaxVertices);
+        finCompute.Dispatch(_kernelFinalize, 1, 1, 1);
     }
 
     void OnBeginCamera(ScriptableRenderContext ctx, Camera camera)
@@ -398,28 +808,35 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (camera == null || camera.cameraType == CameraType.Preview)
             return;
 
-        PrepareFrame();
+        PrepareSkinFrame();
+        GenerateFinsForCamera(camera);
         DrawShells(camera);
+        DrawFins(camera);
     }
 
     void DrawShells(Camera camera)
     {
-        if (!_ready || _bindMesh == null || _skinnedBuffer == null || _runtimeFurMat == null && furMaterial == null)
+        if (!_ready || _bindMesh == null || _skinnedBuffer == null)
             return;
 
-        EnsureMaterial();
+        EnsureFurMaterial();
         Material mat = _runtimeFurMat != null ? _runtimeFurMat : furMaterial;
-        if (mat == null || !mat.enableInstancing)
-        {
-            if (mat != null)
-                mat.enableInstancing = true;
-        }
-        if (mat == null || mat.shader == null || !mat.shader.isSupported)
+        if (mat == null)
+            return;
+        if (!mat.enableInstancing)
+            mat.enableInstancing = true;
+        if (mat.shader == null || !mat.shader.isSupported)
             return;
 
         int drawCount = shellCount;
         float layerOffset = 0f;
-        if (hideBaseMesh)
+        if (finsOnly)
+        {
+            // Keep a single base/root shell so body is not hollow under fins.
+            drawCount = 1;
+            layerOffset = hideBaseMesh ? 1f : 0f;
+        }
+        else if (hideBaseMesh)
         {
             drawCount = Mathf.Max(1, shellCount - 1);
             layerOffset = 1f;
@@ -432,11 +849,8 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         _mpb.SetFloat(ShellCountId, Mathf.Max(shellCount, 2));
         _mpb.SetFloat(ShellLayerOffsetId, layerOffset);
         _mpb.SetFloat(FurLengthId, furLength);
-        _mpb.SetFloat(GravityId, gravityStrength);
-        _mpb.SetVector(GravityDirId,
-            gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down);
+        ApplyPhysicsToMpb(_mpb);
 
-        // World-space skin: object matrices are identity
         if (_instanceMatrices == null || _instanceMatrices.Length < drawCount)
         {
             _instanceMatrices = new Matrix4x4[MaxShells];
@@ -444,14 +858,10 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
                 _instanceMatrices[i] = Matrix4x4.identity;
         }
 
-        // Expand mesh bounds using SMR bounds so culling works
         if (_smr != null)
         {
-            Bounds wb = _smr.bounds;
-            wb.Expand(furLength * 2f);
-            // mesh bounds stay local; DrawMeshInstanced with I uses mesh.bounds — expand bind mesh
             Bounds lb = _bindMesh.bounds;
-            float pad = furLength * 2f + wb.extents.magnitude * 0.1f;
+            float pad = furLength * 2f + _smr.bounds.extents.magnitude * 0.1f;
             lb.Expand(pad);
             _bindMesh.bounds = lb;
         }
@@ -469,5 +879,68 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
             camera,
             LightProbeUsage.Off,
             null);
+    }
+
+    void DrawFins(Camera camera)
+    {
+        if (!enableFins || !_ready || !_finsReady)
+            return;
+        if (_finVertexBuffer == null || _finArgsBuffer == null)
+            return;
+
+        EnsureFinMaterial();
+        Material mat = _runtimeFinMat;
+        if (mat == null || mat.shader == null || !mat.shader.isSupported)
+            return;
+
+        CopyShellLookToFin(mat);
+
+        if (_mpbFin == null)
+            _mpbFin = new MaterialPropertyBlock();
+        _mpbFin.Clear();
+        _mpbFin.SetBuffer(FinVerticesId, _finVertexBuffer);
+        _mpbFin.SetFloat(FurLengthId, furLength);
+        ApplyPhysicsToMpb(_mpbFin);
+        _mpbFin.SetFloat(FinRootOpacityId, finRootOpacity);
+        _mpbFin.SetFloat(FinTipOpacityId, finTipOpacity);
+        _mpbFin.SetFloat(FinOpacityFadeStartId, finOpacityFadeStart);
+        _mpbFin.SetFloat(FinOpacityFadeEndId, finOpacityFadeEnd);
+        _mpbFin.SetFloat(FinOpacityPowerId, finOpacityPower);
+        _mpbFin.SetFloat(ShellCountId, Mathf.Max(shellCount, 2));
+
+        // Keep root/tip colors in lockstep with the shell fur material.
+        Material shellSrc = _runtimeFurMat != null ? _runtimeFurMat : furMaterial;
+        if (shellSrc != null)
+        {
+            if (shellSrc.HasProperty(BaseColorId))
+                _mpbFin.SetColor(BaseColorId, shellSrc.GetColor(BaseColorId));
+            if (shellSrc.HasProperty(TipColorId))
+                _mpbFin.SetColor(TipColorId, shellSrc.GetColor(TipColorId));
+        }
+
+        Bounds bounds;
+        if (_smr != null)
+        {
+            bounds = _smr.bounds;
+            bounds.Expand(furLength * 2f * finLengthScale + 0.05f);
+        }
+        else
+        {
+            bounds = new Bounds(transform.position, Vector3.one * (furLength * 4f + 1f));
+        }
+
+        var cast = finCastShadows ? shadowCasting : ShadowCastingMode.Off;
+
+        Graphics.DrawProceduralIndirect(
+            mat,
+            bounds,
+            MeshTopology.Triangles,
+            _finArgsBuffer,
+            0,
+            camera,
+            _mpbFin,
+            cast,
+            receiveShadows,
+            gameObject.layer);
     }
 }

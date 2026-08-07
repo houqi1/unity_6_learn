@@ -41,6 +41,21 @@ CBUFFER_START(UnityPerMaterial)
     float  _ShadowStrength;
 CBUFFER_END
 
+// Guide-strand bend samples (world-space). Set via MaterialPropertyBlock.
+float4 _FurChain[9];
+float  _FurChainCount;
+float  _UseFurChain;
+
+float3 SampleFurChainBendWS(float layer)
+{
+    int count = (int)clamp(_FurChainCount, 1.0, 9.0);
+    float t = saturate(layer) * max((float)count - 1.0, 0.0);
+    int i0 = (int)floor(t);
+    int i1 = min(i0 + 1, count - 1);
+    float f = t - (float)i0;
+    return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
+}
+
 float Hash21(float2 p)
 {
     p = frac(p * float2(123.34, 456.21));
@@ -103,8 +118,10 @@ half3 ShadeShellFurGpu(float3 positionWS, float3 normalWS, float2 uv, float laye
 
     float3 n = NormalizeNormalPerPixel(normalWS);
     float3 vDir = GetWorldSpaceNormalizeViewDir(positionWS);
+    // DrawMeshInstanced does not fill unity_LightData.z; force main distance atten = 1.
     float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
     Light mainLight = GetMainLight(shadowCoord);
+    mainLight.distanceAttenuation = 1.0;
     half NdotL = saturate(dot(n, mainLight.direction));
     half3 lighting = mainLight.color * (mainLight.shadowAttenuation * mainLight.distanceAttenuation * NdotL);
     half3 ambient = SampleSH(n) * ao;
@@ -178,9 +195,11 @@ Varyings ShellFurGpuVert(Attributes input)
     // Smooth normal: extrusion + lighting (softer shading on shells).
     float3 nSmoothWS = float3(sv.sx, sv.sy, sv.sz);
 
-    float layer2 = layer * layer;
     posWS += nSmoothWS * (layer * _FurLength);
-    posWS += normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * _FurLength);
+    if (_UseFurChain > 0.5)
+        posWS += SampleFurChainBendWS(layer);
+    else
+        posWS += normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer * layer * _FurLength);
 
     output.positionCS = TransformWorldToHClip(posWS);
     output.positionWS = posWS;
@@ -240,7 +259,10 @@ ShadowVaryings ShellFurGpuShadowVert(ShadowAttributes input)
     float3 posWS = float3(sv.px, sv.py, sv.pz);
     float3 nSmoothWS = float3(sv.sx, sv.sy, sv.sz);
     posWS += nSmoothWS * (layer * _FurLength);
-    posWS += normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer * layer * _FurLength);
+    if (_UseFurChain > 0.5)
+        posWS += SampleFurChainBendWS(layer);
+    else
+        posWS += normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer * layer * _FurLength);
 
 #if _CASTING_PUNCTUAL_LIGHT_SHADOW
     float3 lightDirectionWS = normalize(_LightPosition - posWS);

@@ -18,6 +18,9 @@ public class ShellFurRenderer : MonoBehaviour
     static readonly int FurLengthId = Shader.PropertyToID("_FurLength");
     static readonly int GravityId = Shader.PropertyToID("_Gravity");
     static readonly int GravityDirId = Shader.PropertyToID("_GravityDir");
+    static readonly int FurChainId = Shader.PropertyToID("_FurChain");
+    static readonly int FurChainCountId = Shader.PropertyToID("_FurChainCount");
+    static readonly int UseFurChainId = Shader.PropertyToID("_UseFurChain");
     static readonly int FinExtrudeWeightId = Shader.PropertyToID("_FinExtrudeWeight");
     static readonly int FinSharpId = Shader.PropertyToID("_FinSilhouetteSharpness");
     static readonly int FinBiasId = Shader.PropertyToID("_FinSilhouetteBias");
@@ -114,6 +117,10 @@ public class ShellFurRenderer : MonoBehaviour
     [SerializeField] float gravityStrength = 0.35f;
     [SerializeField] Vector3 gravityDirection = Vector3.down;
 
+    [Header("Dynamics (guide strand: root pinned to object)")]
+    [Tooltip("Root = strand base on object; free nodes Spring/Verlet; each shell layer samples the chain.")]
+    [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
+
     [Header("Rendering")]
     [SerializeField] ShadowCastingMode shadowCasting = ShadowCastingMode.On;
     [SerializeField] bool receiveShadows = true;
@@ -149,6 +156,8 @@ public class ShellFurRenderer : MonoBehaviour
     bool _loggedFinBuildFail;
     bool _loggedBadSlot;
     bool _loggedSkinnedNoFins;
+    bool _dynamicsSteppedThisFrame;
+    int _dynamicsStepFrame = -1;
 
     public int ShellCount
     {
@@ -203,6 +212,8 @@ public class ShellFurRenderer : MonoBehaviour
     }
 
     public bool IsSkinned => _skinned != null;
+
+    public ShellFurDynamics Dynamics => dynamics;
 
     /// <summary>null = whole mesh; otherwise valid submesh indices for fur.</summary>
     int[] GetActiveFurSubmeshes(Mesh mesh)
@@ -316,6 +327,35 @@ public class ShellFurRenderer : MonoBehaviour
     {
         RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
         RestoreSourceRendererState();
+        dynamics?.ResetState();
+        _dynamicsSteppedThisFrame = false;
+        _dynamicsStepFrame = -1;
+    }
+
+    void LateUpdate()
+    {
+        StepDynamicsIfNeeded();
+    }
+
+    void StepDynamicsIfNeeded()
+    {
+        if (dynamics == null)
+            return;
+
+        int frame = Time.frameCount;
+        if (_dynamicsStepFrame == frame && _dynamicsSteppedThisFrame)
+            return;
+
+        float dt = Application.isPlaying ? Time.deltaTime : Time.unscaledDeltaTime;
+        if (dt <= 1e-6f)
+            dt = 1f / 60f;
+
+        Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
+        Vector3 anchor = _skinned != null ? _skinned.transform.position : transform.position;
+
+        dynamics.Evaluate(anchor, gDir, gravityStrength, furLength, dt);
+        _dynamicsStepFrame = frame;
+        _dynamicsSteppedThisFrame = true;
     }
 
     void OnDestroy()
@@ -664,6 +704,33 @@ public class ShellFurRenderer : MonoBehaviour
             DrawFins(camera);
     }
 
+    void ApplyPhysicsToMpb()
+    {
+        Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
+        _mpb.SetFloat(GravityId, gravityStrength);
+        _mpb.SetVector(GravityDirId, gDir);
+
+        // Ensure chain is stepped before draw (edit mode / first frame).
+        if (dynamics != null && dynamics.enabled)
+        {
+            if (!_dynamicsSteppedThisFrame || _dynamicsStepFrame != Time.frameCount)
+                StepDynamicsIfNeeded();
+        }
+
+        bool useChain = dynamics != null && dynamics.enabled && dynamics.HasSamples;
+        if (useChain)
+        {
+            _mpb.SetFloat(UseFurChainId, 1f);
+            _mpb.SetFloat(FurChainCountId, dynamics.SampleCount);
+            _mpb.SetVectorArray(FurChainId, dynamics.BendSamples);
+        }
+        else
+        {
+            _mpb.SetFloat(UseFurChainId, 0f);
+            _mpb.SetFloat(FurChainCountId, 0f);
+        }
+    }
+
     void FillPropertyBlock()
     {
         if (_mpb == null)
@@ -673,8 +740,7 @@ public class ShellFurRenderer : MonoBehaviour
         _mpb.SetFloat(ShellCountId, shellCount);
         _mpb.SetFloat(ShellLayerOffsetId, 0f);
         _mpb.SetFloat(FurLengthId, furLength);
-        _mpb.SetFloat(GravityId, gravityStrength);
-        _mpb.SetVector(GravityDirId, gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down);
+        ApplyPhysicsToMpb();
         _mpb.SetFloat(FinExtrudeWeightId, finExtrudeWeight);
         _mpb.SetFloat(FinSharpId, finSilhouetteSharpness);
         _mpb.SetFloat(FinBiasId, finSilhouetteBias);

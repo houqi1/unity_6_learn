@@ -1,0 +1,237 @@
+// CS B2: after skin, emit silhouette fin triangle lists into a compact vertex buffer.
+// True GS migration: silhouette test + multi-segment extrude + gravity, no Geometry Shader.
+
+#pragma kernel CSResetFinCounter
+#pragma kernel CSGenerateFins
+#pragma kernel CSFinalizeFinArgs
+
+// Match ShellFurGpuSkinTypes.SkinnedVertex
+struct SkinnedVertex
+{
+    float px, py, pz, pad0;
+    float nx, ny, nz, pad1;
+    float sx, sy, sz, pad2;
+    float u, v, pad3a, pad3b;
+};
+
+// Match ShellFurGpuSkinTypes.FinEdge
+struct FinEdge
+{
+    uint v0, v1;
+    uint a0, a1, a2;
+    uint b0, b1, b2;
+    uint flags;
+    uint pad;
+};
+
+// Match ShellFurGpuSkinTypes.FinVertex
+struct FinVertex
+{
+    float px, py, pz, pad0;
+    float nx, ny, nz, pad1;
+    float u, v, height01, silhouette;
+};
+
+StructuredBuffer<SkinnedVertex> _SkinnedVertices;
+StructuredBuffer<FinEdge> _FinEdges;
+RWStructuredBuffer<FinVertex> _FinVertices;
+RWStructuredBuffer<uint> _FinCounter;   // [0] = written vertex count
+RWStructuredBuffer<uint> _FinDrawArgs;  // indirect: vertexCount, instanceCount, startVertex, startInstance
+
+uint _FinEdgeCount;
+uint _FinSegments;
+uint _FinMaxVertices;
+float3 _FinCameraPos;
+
+float _FurLength;
+float _FinLengthScale;
+float _FinExtrudeWeight;
+float _FinSilhouetteSharpness;
+float _FinSilhouetteBias;
+float _FinSilhouettePower;
+float _FinBandStrength;
+float _FinRootOffset;
+float _FinMinSilhouette;
+float _Gravity;
+float3 _GravityDir;
+float4 _FurChain[9];
+float _FurChainCount;
+float _UseFurChain;
+
+float3 SkinnedPos(uint i)
+{
+    SkinnedVertex v = _SkinnedVertices[i];
+    return float3(v.px, v.py, v.pz);
+}
+
+float3 SkinnedSmooth(uint i)
+{
+    SkinnedVertex v = _SkinnedVertices[i];
+    float3 s = float3(v.sx, v.sy, v.sz);
+    float s2 = dot(s, s);
+    return s2 > 1e-12 ? s * rsqrt(s2) : float3(0, 1, 0);
+}
+
+float2 SkinnedUV(uint i)
+{
+    SkinnedVertex v = _SkinnedVertices[i];
+    return float2(v.u, v.v);
+}
+
+float3 FaceNormalWS(uint i0, uint i1, uint i2)
+{
+    float3 p0 = SkinnedPos(i0);
+    float3 p1 = SkinnedPos(i1);
+    float3 p2 = SkinnedPos(i2);
+    float3 n = cross(p1 - p0, p2 - p0);
+    float n2 = dot(n, n);
+    return n2 > 1e-20 ? n * rsqrt(n2) : float3(0, 1, 0);
+}
+
+// Same soft silhouette as ShellFur.hlsl ComputeFinSilhouette (world-space).
+float ComputeFinSilhouetteWS(float3 positionWS, float3 nA, float3 nB)
+{
+    float3 V = normalize(_FinCameraPos - positionWS);
+    float dA = dot(nA, V);
+    float dB = dot(nB, V);
+    float sharp = max(_FinSilhouetteSharpness, 0.01);
+    float raw = 0.0;
+
+    if (dot(nA, nB) > 0.995)
+    {
+        float graze = saturate(1.0 - abs(dA));
+        raw = pow(abs(graze), lerp(2.5, 0.75, saturate(sharp / 16.0)));
+    }
+    else
+    {
+        float opposite = saturate(-dA * dB * sharp);
+        float mixAB = abs(dA) + abs(dB);
+        float band = saturate(1.0 - mixAB * 0.5);
+        band = pow(abs(band), 2.0) * saturate(_FinBandStrength);
+        raw = saturate(opposite + band * opposite);
+    }
+
+    raw = saturate(raw - saturate(_FinSilhouetteBias));
+    float p = max(_FinSilhouettePower, 1e-3);
+    raw = pow(abs(raw), p);
+    return saturate(raw * max(_FinExtrudeWeight, 0.0));
+}
+
+float3 SampleFurChainBendWS(float layer)
+{
+    int count = (int)clamp(_FurChainCount, 1.0, 9.0);
+    float t = saturate(layer) * max((float)count - 1.0, 0.0);
+    int i0 = (int)floor(t);
+    int i1 = min(i0 + 1, count - 1);
+    float f = t - (float)i0;
+    return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
+}
+
+float3 ExtrudeFinPoint(float3 baseWS, float3 upWS, float height01, float silhouette)
+{
+    float h = saturate(height01) * saturate(silhouette);
+    float len = _FurLength * max(_FinLengthScale, 0.0);
+    float rootLift = _FinRootOffset * (1.0 - saturate(height01));
+    float3 up = normalize(upWS + 1e-5);
+    float3 pos = baseWS + up * (len * h + rootLift);
+    if (_UseFurChain > 0.5)
+        pos += SampleFurChainBendWS(saturate(height01));
+    else
+    {
+        float layer2 = h * h;
+        float3 gDir = normalize(_GravityDir + 1e-5);
+        pos += gDir * (_Gravity * layer2 * len);
+    }
+    return pos;
+}
+
+FinVertex MakeFinVert(float3 pos, float3 nrm, float2 uv, float height01, float sil)
+{
+    FinVertex o;
+    o.px = pos.x; o.py = pos.y; o.pz = pos.z; o.pad0 = 0;
+    o.nx = nrm.x; o.ny = nrm.y; o.nz = nrm.z; o.pad1 = 0;
+    o.u = uv.x; o.v = uv.y;
+    o.height01 = height01;
+    o.silhouette = sil;
+    return o;
+}
+
+[numthreads(1, 1, 1)]
+void CSResetFinCounter(uint3 id : SV_DispatchThreadID)
+{
+    _FinCounter[0] = 0;
+}
+
+[numthreads(64, 1, 1)]
+void CSGenerateFins(uint3 id : SV_DispatchThreadID)
+{
+    uint eid = id.x;
+    if (eid >= _FinEdgeCount)
+        return;
+
+    FinEdge e = _FinEdges[eid];
+    float3 p0 = SkinnedPos(e.v0);
+    float3 p1 = SkinnedPos(e.v1);
+    float3 nA = FaceNormalWS(e.a0, e.a1, e.a2);
+    float3 nB = ((e.flags & 1u) != 0u) ? FaceNormalWS(e.b0, e.b1, e.b2) : nA;
+
+    float3 mid = 0.5 * (p0 + p1);
+    float sil = ComputeFinSilhouetteWS(mid, nA, nB);
+    if (sil < _FinMinSilhouette)
+        return;
+
+    uint segments = max(_FinSegments, 1u);
+    uint vertsNeeded = segments * 6u;
+    if (vertsNeeded == 0)
+        return;
+
+    // Capacity is edgeCount * segments * 6 so a full emit never exceeds when sized on CPU.
+    uint start = 0;
+    InterlockedAdd(_FinCounter[0], vertsNeeded, start);
+    if (start + vertsNeeded > _FinMaxVertices)
+        return;
+
+    float3 up0 = SkinnedSmooth(e.v0);
+    float3 up1 = SkinnedSmooth(e.v1);
+    float2 uv0 = SkinnedUV(e.v0);
+    float2 uv1 = SkinnedUV(e.v1);
+
+    // Average up for lighting-facing; blend toward face average for side cards.
+    float3 nCard = normalize(up0 + up1 + 1e-5);
+
+    for (uint s = 0u; s < segments; s++)
+    {
+        float h0 = (float)s / (float)segments;
+        float h1 = (float)(s + 1u) / (float)segments;
+
+        float3 r0 = ExtrudeFinPoint(p0, up0, h0, sil);
+        float3 r1 = ExtrudeFinPoint(p1, up1, h0, sil);
+        float3 t0 = ExtrudeFinPoint(p0, up0, h1, sil);
+        float3 t1 = ExtrudeFinPoint(p1, up1, h1, sil);
+
+        // Two triangles: r0-r1-t1, r0-t1-t0 (non-indexed list)
+        uint base = start + s * 6u;
+        _FinVertices[base + 0] = MakeFinVert(r0, nCard, uv0, h0, sil);
+        _FinVertices[base + 1] = MakeFinVert(r1, nCard, uv1, h0, sil);
+        _FinVertices[base + 2] = MakeFinVert(t1, nCard, uv1, h1, sil);
+        _FinVertices[base + 3] = MakeFinVert(r0, nCard, uv0, h0, sil);
+        _FinVertices[base + 4] = MakeFinVert(t1, nCard, uv1, h1, sil);
+        _FinVertices[base + 5] = MakeFinVert(t0, nCard, uv0, h1, sil);
+    }
+}
+
+[numthreads(1, 1, 1)]
+void CSFinalizeFinArgs(uint3 id : SV_DispatchThreadID)
+{
+    uint n = _FinCounter[0];
+    // Safety: only complete triangles.
+    n = (n / 3u) * 3u;
+    if (n > _FinMaxVertices)
+        n = (_FinMaxVertices / 3u) * 3u;
+
+    // Non-indexed DrawProceduralIndirect args
+    _FinDrawArgs[0] = n; // vertexCountPerInstance
+    _FinDrawArgs[1] = 1; // instanceCount
+    _FinDrawArgs[2] = 0; // startVertex
+    _FinDrawArgs[3] = 0; // startInstance
+}

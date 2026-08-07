@@ -24,6 +24,7 @@ URP shell-fur implementation for Unity 6. Multiple transparent-cutout **shell la
 | Strand Density | Procedural grid frequency |
 | Thickness | Strand radius / taper base |
 | Gravity | Quadratic tip droop |
+| Dynamics | Guide strand: root pinned to object, free nodes **Spring** / **Verlet**; each shell layer samples the chain for bend. |
 | Use Procedural Strands | On = hash strands; Off = `_FurMap` density texture |
 
 ## Smooth normals → vertex colors
@@ -46,6 +47,21 @@ Extrusion uses smooth normals; lighting still uses mesh normals.
 
 **Compute skins once → DrawMeshInstanced extrudes N shells** (no per-frame smooth recompute).
 
+### CS Fins B2 (true Geometry-Shader migration)
+
+After skinning, a second compute pass walks a **prebuilt edge table**, tests **view-dependent silhouette**, and **emits only erect fins** into a compact vertex buffer (multi-segment + gravity). Draw with **`Graphics.DrawProceduralIndirect`** — no Geometry Shader.
+
+| Stage | Role |
+|-------|------|
+| Offline | `ShellFurFinEdgeBuilder` → `FinEdge[]` from bind fur mesh |
+| CS Skin | bind verts → world `SkinnedVertex` buffer |
+| CS Fin | edge silhouette → compact fin triangles (`FinVertex`) + indirect args |
+| Draw | shells instanced, then procedural fins (transparent) |
+
+Static-mesh fins on **`ShellFurRenderer`** are unchanged (CPU fin mesh + VS silhouette).
+
+### Setup
+
 1. Enable **Read/Write** on the character FBX (or use the build menu).
 2. Optional: **Tools → Shell Fur → Build GPU Skin Fur Mesh From Selection**  
    - Creates a **separate DATA** `.asset` under `Assets/ShellFur/Meshes/`.  
@@ -54,8 +70,9 @@ Extrusion uses smooth normals; lighting still uses mesh normals.
 3. Add component **`ShellFurGpuSkinRenderer`** next to `SkinnedMeshRenderer`.
 4. Assign material using shader **`Custom/ShellFurGpuSkinned`**.
 5. Assign **Skin Compute** = `Assets/ShellFur/Shaders/ShellFurGpuSkin.compute`.
-6. Set **Fur Material Slots** (e.g. tails `1,2`), enable hide source slots / hide base as needed.
-7. Play animation — fur follows bones via GPU skinning.
+6. Assign **Fin Compute** = `Assets/ShellFur/Shaders/ShellFurGpuFin.compute` (Editor auto-loads if empty).
+7. Set **Fur Material Slots** (e.g. tails `1,2`), enable hide source slots / hide base as needed.
+8. Enable **Fins (CS B2)**; tune segments / silhouette / opacity. Play animation — shells + fins follow bones.
 
 Design doc: `Docs/GPU-Skinning-ShellFur-Design.md`.
 
@@ -70,7 +87,7 @@ Shells support **SkinnedMeshRenderer** with full animation via per-frame `BakeMe
 3. Use **Material Slot Only** if only one material slot should be furry.
 4. Assign **Fur Material**; play the Animator — shells follow the skinned pose.
 
-**Fins are not skinned yet** (skipped when a skinned mesh is detected). Static `MeshFilter` objects still get fins.
+**Fins on this path:** still static-mesh only. For animated fins use **`ShellFurGpuSkinRenderer`** (CS B2).
 
 Tips:
 
