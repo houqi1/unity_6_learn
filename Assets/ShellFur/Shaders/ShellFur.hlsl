@@ -62,7 +62,8 @@ CBUFFER_START(UnityPerMaterial)
     float  _FinOpacityPower;
 CBUFFER_END
 
-// Guide additive offsets δ (CPU: chain - erectRest). Shell = n*h*L + δ when _UseFurChain.
+// Guide additive offsets δ. Shell = pure extrude (n*h*L) + δ when _UseFurChain; GravityBend off.
+// CPU: δ(h) = (chainPos(h) - root) * guideOffsetScale; shader samples by shell layer h.
 // Outside UnityPerMaterial — set via MaterialPropertyBlock.
 // Size must match ShellFurDynamics.MaxNodes
 float4 _FurChain[17];
@@ -145,7 +146,7 @@ float3 ApplyShellDisplacement(float3 positionOS, float3 extrudeNormalOS, float l
 
     if (_UseFurChain > 0.5)
     {
-        // Additive guide offset δ = chainSample - root (HTML follow lag / hang).
+        // Additive guide δ only — base stays pure extrude (no GravityBend).
         offset += TransformWorldToObjectDir(SampleFurChainOffsetWS(layer), false);
     }
     else

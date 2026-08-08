@@ -24,10 +24,16 @@ URP shell-fur implementation for Unity 6. Multiple transparent-cutout **shell la
 | Strand Density | Procedural grid frequency |
 | Thickness | Strand radius / taper base |
 | Gravity (static) | Only when Dynamics **off**: `pow(layer, GravityPower)` formula droop |
-| Dynamics | HTML-style follow spring on guide nodes (or Verlet rope). Shell = base extrude + chain offset δ |
+| Dynamics | Spring / Verlet / **Grass**. Shell = **pure extrude** + chain δ (shader skips GravityBend while chain on) |
+| Guide Chain Length | Absolute root→tip chain length (world). **0** = Fur Length × Length Scale |
+| Length Scale | Used only when Guide Chain Length is 0 |
+| Guide Offset Scale | Shell δ = (chainPos(h) − root) × scale; h = shell layer 0…1 |
+| Mode → Grass | HTML Interactive Grass: fixed segment length + hang stiffness |
+| Grass Stiffness | Recover speed toward hang ideal (~0.01–0.25 like the HTML slider) |
+| Gravity As Rest Pose | Spring/Verlet only. ON: rest = static gravity shell pose; OFF: live g / chase previous. **Ignored in Grass** |
 | Follow Tension / Min | Root→tip tension falloff (Spring); Min = tip softness |
 | Velocity Damping / Min | Root→tip velocity-keep rise (Spring); Damping = tip max keep |
-| Particle Gravity | Added to acceleration in sim (HTML-style scale, try 0.3–2) |
+| Particle Gravity | Spring/Verlet accel scale (try 0.3–2); ignored in Grass |
 | Use Procedural Strands | On = hash strands; Off = `_FurMap` density texture |
 
 ## Smooth normals → vertex colors

@@ -123,7 +123,7 @@ public class ShellFurRenderer : MonoBehaviour
     [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand: root pinned to object)")]
-    [Tooltip("Root = strand base on object; free nodes Spring/Verlet; each shell layer samples the chain.")]
+    [Tooltip("Root pinned to object. Modes: Spring / Verlet / Grass (HTML hang constraints). Shell = pure extrude + chain δ (no GravityBend while chain on).")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     [Header("Rendering")]
@@ -361,7 +361,7 @@ public class ShellFurRenderer : MonoBehaviour
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
         Vector3 anchor = _skinned != null ? _skinned.transform.position : transform.position;
 
-        dynamics.Evaluate(anchor, gDir, furLength, dt);
+        dynamics.Evaluate(anchor, gDir, furLength, dt, gravityStrength, gravityPower);
         _dynamicsStepFrame = frame;
         _dynamicsSteppedThisFrame = true;
     }

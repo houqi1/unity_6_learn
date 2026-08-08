@@ -130,7 +130,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand: root pinned to object)")]
-    [Tooltip("Root = strand base; free nodes Spring/Verlet; shells/fins sample chain by height.")]
+    [Tooltip("Root pinned to object. Modes: Spring / Verlet / Grass. Shell = pure extrude + chain δ (no GravityBend while chain on).")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     [Header("Rendering")]
@@ -228,7 +228,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
 
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
         Transform t = _smr != null ? _smr.transform : transform;
-        dynamics.Evaluate(t.position, gDir, furLength, dt);
+        dynamics.Evaluate(t.position, gDir, furLength, dt, gravityStrength, gravityPower);
         _dynamicsStepFrame = frame;
         _dynamicsSteppedThisFrame = true;
     }

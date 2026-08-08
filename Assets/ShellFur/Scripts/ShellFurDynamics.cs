@@ -1,14 +1,10 @@
 using UnityEngine;
 
 /// <summary>
-/// Guide-strand dynamics (HTML follow spring):
-///   force = tension * (target - pos)
-///   a = force/mass + gravity
-///   v = (v + a) * velocityDamping
-///   pos += v
-/// Target for free node i = previous node (root for i=1), same as HTML leader.
-/// With gravity=0, free nodes settle onto the root (coincident).
-/// Shell: base extrude + δ, δ = p(h) - root (follow lag / hang).
+/// Guide-strand dynamics for shell fur.
+/// Spring / Verlet / Grass = different chain sims.
+/// Shell offset: sample chain at shell layer h, δ = (chainPos(h) - root) * guideOffsetScale.
+/// Shader: final = pure extrude + δ; GravityBend off while UseFurChain.
 /// </summary>
 [System.Serializable]
 public class ShellFurDynamics
@@ -18,7 +14,12 @@ public class ShellFurDynamics
         /// <summary>HTML-style follow spring toward previous node / root.</summary>
         Spring = 0,
         /// <summary>Position Verlet + distance constraints.</summary>
-        Verlet = 1
+        Verlet = 1,
+        /// <summary>
+        /// Interactive Grass: fixed segment length + positional stiffness toward hang ideal.
+        /// Shell base = pure extrude; hang/sway only from this chain (no static GravityBend rest).
+        /// </summary>
+        Grass = 2
     }
 
     public const int MaxNodes = 17;
@@ -32,21 +33,40 @@ public class ShellFurDynamics
     [Tooltip("Enable guide-strand dynamics.")]
     public bool enabled;
 
-    [Tooltip("Spring = HTML follow. Verlet = rope constraints.")]
+    [Tooltip("Spring = follow spring. Verlet = rope. Grass = HTML fixed-length hang constraints.")]
     public Mode mode = Mode.Spring;
 
     [Header("Chain")]
-    [Tooltip("Nodes including root. 2 = one follower (closest to HTML demo).")]
+    [Tooltip("Nodes including root. Segment length = guide chain length / (nodeCount - 1).")]
     [Range(MinNodes, MaxNodes)]
     public int nodeCount = 2;
 
-    [Tooltip("Used for Verlet rest length / init spacing. Spring HTML chases root (not this length).")]
-    [Min(0.1f)]
+    [Tooltip(
+        "Absolute guide-chain length in world units (root → tip along the strand).\n" +
+        "0 = auto: Fur Length × Length Scale. >0 overrides and is independent of fur length.")]
+    [Min(0f)]
+    public float guideChainLength = 0f;
+
+    [Tooltip("When Guide Chain Length is 0: chain length = furLength × this scale.")]
+    [Min(0.01f)]
     public float lengthScale = 1.15f;
 
-    [Tooltip("Gravity m/s² on free nodes (world units). 0 = no droop.")]
+    [Header("Shell ↔ chain mapping")]
+    [Tooltip(
+        "Shell layer h ∈ [0,1] samples the guide chain, then shell offset = (chainPos(h) - root) * this scale.\n" +
+        "1 = full chain offset; 0 = no chain influence; >1 amplifies sway/hang.")]
+    [Min(0f)]
+    public float guideOffsetScale = 1f;
+
+    [Tooltip("Gravity m/s² in force integration (Spring/Verlet only; ignored in Grass mode).")]
     [Min(0f)]
     public float particleGravity = 2f;
+
+    [Tooltip(
+        "Spring/Verlet only. ON: gravity is NOT added to forces; rest targets are static gravity shell offsets.\n" +
+        "OFF: live g in forces; rest target is previous node / root.\n" +
+        "Ignored in Grass mode (hang ideal = gravity dir; shell base stays pure extrude).")]
+    public bool gravityAsRestPose;
 
     [Min(0f)]
     public float teleportDistance = 1.5f;
@@ -76,6 +96,23 @@ public class ShellFurDynamics
     [Min(0f)]
     public float maxStretchLength = 0.12f;
 
+    [Header("Grass (HTML fixed-length hang)")]
+    [Tooltip("Per 1/60s positional blend toward hang ideal (HTML speed slider ~0.01–0.25). Higher = faster recover.")]
+    [Range(0.01f, 0.5f)]
+    public float grassStiffness = 0.05f;
+
+    [Tooltip("How much tip softens vs root: segmentStiffness *= (1 - i/n * this). HTML uses 0.5.")]
+    [Range(0f, 1f)]
+    public float grassTipSoftness = 0.5f;
+
+    [Tooltip("Optional lateral wind on hang ideal (world units, like HTML *2). 0 = off.")]
+    [Min(0f)]
+    public float grassWindStrength = 0f;
+
+    [Tooltip("Wind phase speed (rad-ish per second scaled). HTML uses ~0.02 per frame.")]
+    [Min(0f)]
+    public float grassWindSpeed = 1.2f;
+
     [Header("Verlet (optional)")]
     [Min(0f)]
     public float bendStiffness = 0f;
@@ -100,8 +137,11 @@ public class ShellFurDynamics
     bool _hasHistory;
     Vector3 _prevAnchor;
     Vector3 _erectDir = Vector3.up;
+    float _chainLen;
+    float _windTime;
     Mode _lastMode;
     bool _lastEnabled;
+    bool _lastGravityAsRestPose;
 
     public int SampleCount => _nodeCount;
     public Vector4[] BendSamples => _samples;
@@ -159,11 +199,15 @@ public class ShellFurDynamics
             Debug.DrawLine(_pos[i - 1], _pos[i], guideChainColor, duration, false);
     }
 
+    /// <param name="shellGravityStrength">Renderer gravity strength (for rest-pose baking).</param>
+    /// <param name="shellGravityPower">Renderer gravity falloff power (for rest-pose baking).</param>
     public void Evaluate(
         Vector3 anchorPosition,
         Vector3 gravityDirection,
         float furLength,
-        float deltaTime)
+        float deltaTime,
+        float shellGravityStrength = 0.35f,
+        float shellGravityPower = 2f)
     {
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-8f
             ? gravityDirection.normalized
@@ -172,8 +216,10 @@ public class ShellFurDynamics
 
         int nodes = Mathf.Clamp(nodeCount, MinNodes, MaxNodes);
         int segs = Mathf.Max(nodes - 1, 1);
-        float chainLen = Mathf.Max(furLength * lengthScale, 0.001f);
+        float chainLen = ResolveChainLength(furLength);
         float segLen = chainLen / segs;
+        float gStr = Mathf.Max(0f, shellGravityStrength);
+        float gPow = Mathf.Max(0.01f, shellGravityPower);
 
         if (!enabled)
         {
@@ -185,10 +231,16 @@ public class ShellFurDynamics
             return;
         }
 
-        if (_lastEnabled && (_lastMode != mode || _nodeCount != nodes))
+        // Re-init when mode/nodes/rest policy/chain length change so spacing matches.
+        bool chainLenChanged = _init && _chainLen > 1e-8f &&
+            Mathf.Abs(chainLen - _chainLen) > Mathf.Max(_chainLen, chainLen) * 0.02f;
+        if (_lastEnabled && (_lastMode != mode || _nodeCount != nodes ||
+            _lastGravityAsRestPose != gravityAsRestPose || chainLenChanged))
             _init = false;
         _lastEnabled = true;
         _lastMode = mode;
+        _lastGravityAsRestPose = gravityAsRestPose;
+        _chainLen = chainLen;
 
         float frameDt = deltaTime;
         if (frameDt <= MinDt)
@@ -199,8 +251,7 @@ public class ShellFurDynamics
         {
             _prevAnchor = anchorPosition;
             _hasHistory = true;
-            // HTML: follower starts on the leader.
-            InitChainAtRoot(anchorPosition, nodes);
+            InitChainForMode(anchorPosition, gDir, nodes, segLen, furLength, gStr, gPow);
             PackSamples(anchorPosition);
             return;
         }
@@ -208,22 +259,29 @@ public class ShellFurDynamics
         Vector3 deltaPos = anchorPosition - _prevAnchor;
         if (teleportDistance > 0f && deltaPos.sqrMagnitude > teleportDistance * teleportDistance)
         {
-            InitChainAtRoot(anchorPosition, nodes);
+            InitChainForMode(anchorPosition, gDir, nodes, segLen, furLength, gStr, gPow);
             _prevAnchor = anchorPosition;
             PackSamples(anchorPosition);
             return;
         }
 
         if (!_init || _nodeCount != nodes)
-            InitChainAtRoot(anchorPosition, nodes);
+            InitChainForMode(anchorPosition, gDir, nodes, segLen, furLength, gStr, gPow);
 
         _pos[0] = anchorPosition;
 
         if (mode == Mode.Spring)
-            StepFollowSpringHtml(anchorPosition, gDir, frameDt);
+        {
+            StepFollowSpringHtml(anchorPosition, gDir, frameDt, furLength, gStr, gPow);
+        }
+        else if (mode == Mode.Grass)
+        {
+            if (NeedsVerletSpacing(segLen))
+                InitChainSpaced(anchorPosition, _erectDir, nodes, segLen);
+            StepGrassConstraint(anchorPosition, gDir, segLen, frameDt);
+        }
         else
         {
-            // Verlet still uses spaced rest along erect for rope length.
             if (NeedsVerletSpacing(segLen))
                 InitChainSpaced(anchorPosition, _erectDir, nodes, segLen);
 
@@ -232,7 +290,7 @@ public class ShellFurDynamics
             while (acc > MinDt && steps < MaxSubstepsVerlet)
             {
                 float h = Mathf.Min(FixedStep, acc);
-                SubstepVerlet(anchorPosition, gDir, segLen, h);
+                SubstepVerlet(anchorPosition, gDir, segLen, h, furLength, gStr, gPow);
                 acc -= h;
                 steps++;
             }
@@ -250,6 +308,8 @@ public class ShellFurDynamics
         _hasHistory = false;
         _nodeCount = 0;
         _lastEnabled = false;
+        _windTime = 0f;
+        _chainLen = 0f;
         for (int i = 0; i < MaxNodes; i++)
         {
             _pos[i] = Vector3.zero;
@@ -266,6 +326,24 @@ public class ShellFurDynamics
         followTensionMin = Mathf.Clamp(followTensionMin, 0f, followTension);
         velocityDamping = Mathf.Clamp(velocityDamping, 0.5f, 0.99f);
         velocityDampingMin = Mathf.Clamp(velocityDampingMin, 0.5f, velocityDamping);
+        grassStiffness = Mathf.Clamp(grassStiffness, 0.01f, 0.5f);
+        grassTipSoftness = Mathf.Clamp01(grassTipSoftness);
+        grassWindStrength = Mathf.Max(0f, grassWindStrength);
+        grassWindSpeed = Mathf.Max(0f, grassWindSpeed);
+        guideOffsetScale = Mathf.Max(0f, guideOffsetScale);
+        guideChainLength = Mathf.Max(0f, guideChainLength);
+        lengthScale = Mathf.Max(0.01f, lengthScale);
+    }
+
+    /// <summary>
+    /// Effective root→tip chain length (world units).
+    /// Absolute guideChainLength wins when &gt; 0; else furLength × lengthScale.
+    /// </summary>
+    public float ResolveChainLength(float furLength)
+    {
+        if (guideChainLength > 1e-8f)
+            return Mathf.Max(guideChainLength, 0.001f);
+        return Mathf.Max(furLength * Mathf.Max(lengthScale, 0.01f), 0.001f);
     }
 
     /// <summary>
@@ -295,7 +373,26 @@ public class ShellFurDynamics
         return Mathf.Lerp(dMin, dMax, t);
     }
 
-    /// <summary>HTML: start on the leader (coincident with root).</summary>
+    void InitChainForMode(
+        Vector3 anchor,
+        Vector3 gDir,
+        int nodes,
+        float segLen,
+        float furLength,
+        float gStr,
+        float gPow)
+    {
+        if (mode == Mode.Grass)
+            InitChainSpaced(anchor, _erectDir, nodes, segLen);
+        else if (mode == Mode.Spring && gravityAsRestPose)
+            InitChainAtGravityRest(anchor, gDir, nodes, furLength, gStr, gPow);
+        else if (mode == Mode.Spring)
+            InitChainAtRoot(anchor, nodes);
+        else
+            InitChainSpaced(anchor, _erectDir, nodes, segLen);
+    }
+
+    /// <summary>HTML live-g: start on the leader (coincident with root).</summary>
     void InitChainAtRoot(Vector3 anchor, int nodes)
     {
         _nodeCount = nodes;
@@ -303,6 +400,27 @@ public class ShellFurDynamics
         {
             _pos[i] = anchor;
             _prev[i] = anchor;
+            _vel[i] = Vector3.zero;
+        }
+        _init = true;
+    }
+
+    /// <summary>Start at static gravity shell offsets (distance-0 rest when gravityAsRestPose).</summary>
+    void InitChainAtGravityRest(
+        Vector3 anchor,
+        Vector3 gDir,
+        int nodes,
+        float furLength,
+        float gStr,
+        float gPow)
+    {
+        _nodeCount = nodes;
+        for (int i = 0; i < nodes; i++)
+        {
+            float h = nodes <= 1 ? 0f : (float)i / (nodes - 1);
+            Vector3 p = anchor + StaticGravityOffset(gDir, h, furLength, gStr, gPow);
+            _pos[i] = p;
+            _prev[i] = p;
             _vel[i] = Vector3.zero;
         }
         _init = true;
@@ -321,12 +439,92 @@ public class ShellFurDynamics
         _init = true;
     }
 
+    /// <summary>Same world droop as static shell: gDir * strength * pow(h,power) * furLength.</summary>
+    static Vector3 StaticGravityOffset(
+        Vector3 gDir,
+        float height01,
+        float furLength,
+        float strength,
+        float power)
+    {
+        float h = Mathf.Clamp01(height01);
+        float w = Mathf.Pow(h, Mathf.Max(power, 0.01f));
+        return gDir * (strength * w * Mathf.Max(furLength, 0.001f));
+    }
+
     bool NeedsVerletSpacing(float segLen)
     {
         if (_nodeCount < 2)
             return true;
-        // If all piled on root, space out once for Verlet rope.
+        // If all piled on root, space out once for Verlet/Grass rope.
         return (_pos[1] - _pos[0]).sqrMagnitude < (segLen * 0.01f) * (segLen * 0.01f);
+    }
+
+    /// <summary>
+    /// HTML Interactive Grass resolveConstraints:
+    /// 1) pin root to anchor
+    /// 2) forward fixed-length projection
+    /// 3) positional stiffness toward ideal hang (parent + gDir * segLen)
+    /// 4) re-project length
+    /// No per-node velocity; hang replaces static GravityBend for shell shape.
+    /// </summary>
+    void StepGrassConstraint(Vector3 anchor, Vector3 gDir, float segLen, float dt)
+    {
+        int n = _nodeCount;
+        dt = Mathf.Clamp(dt, MinDt, MaxFrameDt);
+        segLen = Mathf.Max(segLen, 1e-5f);
+
+        _pos[0] = anchor;
+        _vel[0] = Vector3.zero;
+
+        // Forward pass: keep segment lengths (follow-the-leader).
+        for (int i = 1; i < n; i++)
+        {
+            Vector3 delta = _pos[i] - _pos[i - 1];
+            float dist = delta.magnitude;
+            if (dist > 1e-8f)
+                _pos[i] = _pos[i - 1] + delta * (segLen / dist);
+            else
+                _pos[i] = _pos[i - 1] + gDir * segLen;
+        }
+
+        _windTime += grassWindSpeed * dt;
+        // Optional wind axis: world X as mild lateral sway (HTML adds to idealX).
+        Vector3 windAxis = Vector3.Cross(gDir, Vector3.forward);
+        if (windAxis.sqrMagnitude < 1e-6f)
+            windAxis = Vector3.Cross(gDir, Vector3.right);
+        windAxis.Normalize();
+
+        float bodyStiffnessBase = Mathf.Clamp(grassStiffness, 0.01f, 0.5f) * 2f;
+        float tipSoft = Mathf.Clamp01(grassTipSoftness);
+
+        // Hang stiffness + length re-enforce (HTML second loop).
+        for (int i = 1; i < n; i++)
+        {
+            Vector3 ideal = _pos[i - 1] + gDir * segLen;
+            if (grassWindStrength > 1e-8f)
+            {
+                float wind = Mathf.Sin(_windTime + i * 0.1f) * grassWindStrength;
+                ideal += windAxis * wind;
+            }
+
+            // HTML: segmentStiffness = bodyStiffnessBase * (1 - (i/numSegments)*0.5)
+            float segmentStiffness = bodyStiffnessBase * (1f - (i / (float)n) * tipSoft);
+            // Time-scale: HTML values are per-frame @ ~60fps.
+            float alpha = 1f - Mathf.Pow(1f - Mathf.Clamp01(segmentStiffness), dt * 60f);
+
+            _pos[i] += (ideal - _pos[i]) * alpha;
+
+            Vector3 delta = _pos[i] - _pos[i - 1];
+            float dist = delta.magnitude;
+            if (dist > 1e-8f)
+                _pos[i] = _pos[i - 1] + delta * (segLen / dist);
+            else
+                _pos[i] = _pos[i - 1] + gDir * segLen;
+
+            _vel[i] = Vector3.zero;
+            _prev[i] = _pos[i];
+        }
     }
 
     /// <summary>
@@ -343,11 +541,18 @@ public class ShellFurDynamics
     /// k = followTension has unit 1/s² (soft fur often 1–20). Smaller k ⇒ more lag.
     /// Target = previous node (root for i=1). g=0 ⇒ settle on target (coincident with root).
     /// </summary>
-    void StepFollowSpringHtml(Vector3 anchor, Vector3 gDir, float dt)
+    void StepFollowSpringHtml(
+        Vector3 anchor,
+        Vector3 gDir,
+        float dt,
+        float furLength,
+        float gStr,
+        float gPow)
     {
         int n = _nodeCount;
         float mass = Mathf.Max(nodeMass, 0.01f);
-        Vector3 g = gDir * particleGravity;
+        // Live gravity only when NOT baking gravity into rest targets.
+        Vector3 g = gravityAsRestPose ? Vector3.zero : gDir * particleGravity;
         dt = Mathf.Clamp(dt, MinDt, MaxFrameDt);
 
         _pos[0] = anchor;
@@ -357,21 +562,26 @@ public class ShellFurDynamics
 
         for (int i = 1; i < n; i++)
         {
-            Vector3 target = _pos[i - 1]; // leader = previous node
-            // Inner: higher tension, lower velocity-keep; tip: lower tension, higher keep (max).
+            float h = n <= 1 ? 0f : (float)i / (n - 1);
+
+            // Rest target (distance 0):
+            // - gravityAsRestPose: static gravity shell offset (no g in forces)
+            // - else: previous node / root (classic HTML)
+            Vector3 target = gravityAsRestPose
+                ? anchor + StaticGravityOffset(gDir, h, furLength, gStr, gPow)
+                : _pos[i - 1];
+
             float k = TensionAtFreeNode(i, n);
             float damp = VelocityDampingAtFreeNode(i, n);
-            // HTML keep factor per 1/60s → scale with dt.
             float dampStep = Mathf.Pow(damp, dt * 60f);
 
-            // a = k/m * (target - p) + g   (k in 1/s²)
+            // a = k/m * (target - p) [+ g only if live gravity]
             Vector3 a = (target - _pos[i]) * (k / mass) + g;
 
             _vel[i] += a * dt;
             _vel[i] *= dampStep;
             _pos[i] += _vel[i] * dt;
 
-            // Max stretch: clamp |p - target| ≤ maxStretch (hard length limit).
             if (maxStretch > 1e-8f)
                 ClampToMaxStretch(ref _pos[i], ref _vel[i], target, maxStretch);
         }
@@ -397,23 +607,36 @@ public class ShellFurDynamics
             vel -= dir * vOut;
     }
 
-    void SubstepVerlet(Vector3 anchor, Vector3 gDir, float segLen, float dt)
+    void SubstepVerlet(
+        Vector3 anchor,
+        Vector3 gDir,
+        float segLen,
+        float dt,
+        float furLength,
+        float gStr,
+        float gPow)
     {
         int n = _nodeCount;
         float dt2 = dt * dt;
         float keep = 1f - Mathf.Clamp01(verletDamping);
         keep = Mathf.Pow(Mathf.Clamp01(keep), dt * 60f);
-        Vector3 grav = gDir * particleGravity;
+        // Live gravity only when rest pose is not already gravity-baked.
+        Vector3 grav = gravityAsRestPose ? Vector3.zero : gDir * particleGravity;
 
         for (int i = 1; i < n; i++)
         {
             Vector3 p = _pos[i];
             Vector3 v = (p - _prev[i]) * keep;
             Vector3 accel = grav;
-            if (bendStiffness > 0f)
+            if (bendStiffness > 0f || gravityAsRestPose)
             {
-                Vector3 rest = anchor + _erectDir * (segLen * i);
-                accel += (rest - p) * (bendStiffness / Mathf.Max(nodeMass, 0.01f));
+                float h = n <= 1 ? 0f : (float)i / (n - 1);
+                Vector3 rest = gravityAsRestPose
+                    ? anchor + StaticGravityOffset(gDir, h, furLength, gStr, gPow)
+                    : anchor + _erectDir * (segLen * i);
+                float kb = bendStiffness > 0f ? bendStiffness : (gravityAsRestPose ? 20f : 0f);
+                if (kb > 0f)
+                    accel += (rest - p) * (kb / Mathf.Max(nodeMass, 0.01f));
             }
             Vector3 next = p + v + accel * dt2;
             _prev[i] = p;
@@ -451,16 +674,19 @@ public class ShellFurDynamics
     }
 
     /// <summary>
-    /// Shell offset δ(h) = chainSample(h) - root.
-    /// = follow lag / hang relative to leader. Zero when coincident with root.
+    /// Pack additive shell offsets for GPU lookup by layer h ∈ [0,1]:
+    ///   δ(h) = (chainWorldPos(h) - root) * guideOffsetScale
+    /// Shader samples by shell layer and adds to pure normal extrude.
     /// </summary>
     void PackSamples(Vector3 anchor)
     {
         int n = _nodeCount;
+        float scale = Mathf.Max(0f, guideOffsetScale);
+
         for (int i = 0; i < n; i++)
         {
             float h = n <= 1 ? 0f : (float)i / (n - 1);
-            Vector3 delta = _pos[i] - anchor;
+            Vector3 delta = (_pos[i] - anchor) * scale;
             _samples[i] = new Vector4(delta.x, delta.y, delta.z, h);
         }
         for (int i = n; i < MaxNodes; i++)
