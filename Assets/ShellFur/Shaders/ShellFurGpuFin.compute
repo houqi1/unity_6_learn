@@ -54,7 +54,9 @@ float _FinRootOffset;
 float _FinMinSilhouette;
 float _Gravity;
 float3 _GravityDir;
-float4 _FurChain[9];
+float _GravityPower;
+// Size must match ShellFurDynamics.MaxNodes
+float4 _FurChain[17];
 float _FurChainCount;
 float _UseFurChain;
 
@@ -117,14 +119,24 @@ float ComputeFinSilhouetteWS(float3 positionWS, float3 nA, float3 nB)
     return saturate(raw * max(_FinExtrudeWeight, 0.0));
 }
 
-float3 SampleFurChainBendWS(float layer)
+float4 _FurChainErect;
+
+float3 SampleFurChainOffsetWS(float layer)
 {
-    int count = (int)clamp(_FurChainCount, 1.0, 9.0);
+    int count = (int)clamp(_FurChainCount, 1.0, 17.0);
     float t = saturate(layer) * max((float)count - 1.0, 0.0);
     int i0 = (int)floor(t);
     int i1 = min(i0 + 1, count - 1);
     float f = t - (float)i0;
     return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
+}
+
+float3 GravityBendWS(float layer, float lengthScale)
+{
+    float h = saturate(layer);
+    float p = max(_GravityPower, 0.01);
+    float w = pow(h, p);
+    return normalize(_GravityDir + 1e-5) * (_Gravity * w * lengthScale);
 }
 
 float3 ExtrudeFinPoint(float3 baseWS, float3 upWS, float height01, float silhouette)
@@ -133,15 +145,12 @@ float3 ExtrudeFinPoint(float3 baseWS, float3 upWS, float height01, float silhoue
     float len = _FurLength * max(_FinLengthScale, 0.0);
     float rootLift = _FinRootOffset * (1.0 - saturate(height01));
     float3 up = normalize(upWS + 1e-5);
+    float hBend = saturate(height01);
     float3 pos = baseWS + up * (len * h + rootLift);
     if (_UseFurChain > 0.5)
-        pos += SampleFurChainBendWS(saturate(height01));
+        pos += SampleFurChainOffsetWS(hBend);
     else
-    {
-        float layer2 = h * h;
-        float3 gDir = normalize(_GravityDir + 1e-5);
-        pos += gDir * (_Gravity * layer2 * len);
-    }
+        pos += GravityBendWS(hBend, len);
     return pos;
 }
 

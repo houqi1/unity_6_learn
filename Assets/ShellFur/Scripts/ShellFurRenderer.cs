@@ -18,9 +18,11 @@ public class ShellFurRenderer : MonoBehaviour
     static readonly int FurLengthId = Shader.PropertyToID("_FurLength");
     static readonly int GravityId = Shader.PropertyToID("_Gravity");
     static readonly int GravityDirId = Shader.PropertyToID("_GravityDir");
+    static readonly int GravityPowerId = Shader.PropertyToID("_GravityPower");
     static readonly int FurChainId = Shader.PropertyToID("_FurChain");
     static readonly int FurChainCountId = Shader.PropertyToID("_FurChainCount");
     static readonly int UseFurChainId = Shader.PropertyToID("_UseFurChain");
+    static readonly int FurChainErectId = Shader.PropertyToID("_FurChainErect");
     static readonly int FinExtrudeWeightId = Shader.PropertyToID("_FinExtrudeWeight");
     static readonly int FinSharpId = Shader.PropertyToID("_FinSilhouetteSharpness");
     static readonly int FinBiasId = Shader.PropertyToID("_FinSilhouetteBias");
@@ -116,6 +118,9 @@ public class ShellFurRenderer : MonoBehaviour
     [Header("Physics (pushed each frame via MaterialPropertyBlock)")]
     [SerializeField] float gravityStrength = 0.35f;
     [SerializeField] Vector3 gravityDirection = Vector3.down;
+    [Tooltip("Nonlinear droop: bend ∝ pow(layer, power). 2 = classic tip-heavy arc; higher = more tip-only sag.")]
+    [Range(0.5f, 4f)]
+    [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand: root pinned to object)")]
     [Tooltip("Root = strand base on object; free nodes Spring/Verlet; each shell layer samples the chain.")]
@@ -334,12 +339,15 @@ public class ShellFurRenderer : MonoBehaviour
 
     void LateUpdate()
     {
+        dynamics?.ValidateNodeCount();
         StepDynamicsIfNeeded();
+        if (dynamics != null && dynamics.showGuideChain && Application.isPlaying)
+            dynamics.DrawGuideChainDebugLines();
     }
 
     void StepDynamicsIfNeeded()
     {
-        if (dynamics == null)
+        if (dynamics == null || !dynamics.enabled)
             return;
 
         int frame = Time.frameCount;
@@ -353,9 +361,19 @@ public class ShellFurRenderer : MonoBehaviour
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
         Vector3 anchor = _skinned != null ? _skinned.transform.position : transform.position;
 
-        dynamics.Evaluate(anchor, gDir, gravityStrength, furLength, dt);
+        dynamics.Evaluate(anchor, gDir, furLength, dt);
         _dynamicsStepFrame = frame;
         _dynamicsSteppedThisFrame = true;
+    }
+
+    void OnDrawGizmos()
+    {
+        if (dynamics == null || !dynamics.showGuideChain)
+            return;
+        // Keep chain up to date in edit mode when gizmos refresh.
+        if (!Application.isPlaying)
+            StepDynamicsIfNeeded();
+        dynamics.DrawGuideChainGizmos();
     }
 
     void OnDestroy()
@@ -709,6 +727,7 @@ public class ShellFurRenderer : MonoBehaviour
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
         _mpb.SetFloat(GravityId, gravityStrength);
         _mpb.SetVector(GravityDirId, gDir);
+        _mpb.SetFloat(GravityPowerId, Mathf.Max(0.01f, gravityPower));
 
         // Ensure chain is stepped before draw (edit mode / first frame).
         if (dynamics != null && dynamics.enabled)
@@ -723,6 +742,8 @@ public class ShellFurRenderer : MonoBehaviour
             _mpb.SetFloat(UseFurChainId, 1f);
             _mpb.SetFloat(FurChainCountId, dynamics.SampleCount);
             _mpb.SetVectorArray(FurChainId, dynamics.BendSamples);
+            Vector3 erect = dynamics.ErectDirection;
+            _mpb.SetVector(FurChainErectId, new Vector4(erect.x, erect.y, erect.z, 0f));
         }
         else
         {

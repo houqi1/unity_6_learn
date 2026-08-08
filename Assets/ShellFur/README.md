@@ -23,8 +23,11 @@ URP shell-fur implementation for Unity 6. Multiple transparent-cutout **shell la
 | Fur Length | Shell extrusion distance |
 | Strand Density | Procedural grid frequency |
 | Thickness | Strand radius / taper base |
-| Gravity | Quadratic tip droop |
-| Dynamics | Guide strand: root pinned to object, free nodes **Spring** / **Verlet**; each shell layer samples the chain for bend. |
+| Gravity (static) | Only when Dynamics **off**: `pow(layer, GravityPower)` formula droop |
+| Dynamics | HTML-style follow spring on guide nodes (or Verlet rope). Shell = base extrude + chain offset δ |
+| Follow Tension / Min | Root→tip tension falloff (Spring); Min = tip softness |
+| Velocity Damping / Min | Root→tip velocity-keep rise (Spring); Damping = tip max keep |
+| Particle Gravity | Added to acceleration in sim (HTML-style scale, try 0.3–2) |
 | Use Procedural Strands | On = hash strands; Off = `_FurMap` density texture |
 
 ## Smooth normals → vertex colors

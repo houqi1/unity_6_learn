@@ -25,9 +25,11 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     static readonly int FurLengthId = Shader.PropertyToID("_FurLength");
     static readonly int GravityId = Shader.PropertyToID("_Gravity");
     static readonly int GravityDirId = Shader.PropertyToID("_GravityDir");
+    static readonly int GravityPowerId = Shader.PropertyToID("_GravityPower");
     static readonly int FurChainId = Shader.PropertyToID("_FurChain");
     static readonly int FurChainCountId = Shader.PropertyToID("_FurChainCount");
     static readonly int UseFurChainId = Shader.PropertyToID("_UseFurChain");
+    static readonly int FurChainErectId = Shader.PropertyToID("_FurChainErect");
     static readonly int SkinnedVerticesId = Shader.PropertyToID("_SkinnedVertices");
     static readonly int BindVerticesId = Shader.PropertyToID("_BindVertices");
     static readonly int BoneMatricesId = Shader.PropertyToID("_BoneMatrices");
@@ -123,6 +125,9 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     [Header("Physics")]
     [SerializeField] float gravityStrength = 0.35f;
     [SerializeField] Vector3 gravityDirection = Vector3.down;
+    [Tooltip("Nonlinear droop: bend ∝ pow(layer, power). 2 = classic tip-heavy arc.")]
+    [Range(0.5f, 4f)]
+    [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand: root pinned to object)")]
     [Tooltip("Root = strand base; free nodes Spring/Verlet; shells/fins sample chain by height.")]
@@ -202,12 +207,15 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
 
     void LateUpdate()
     {
+        dynamics?.ValidateNodeCount();
         StepDynamicsIfNeeded();
+        if (dynamics != null && dynamics.showGuideChain && Application.isPlaying)
+            dynamics.DrawGuideChainDebugLines();
     }
 
     void StepDynamicsIfNeeded()
     {
-        if (dynamics == null)
+        if (dynamics == null || !dynamics.enabled)
             return;
 
         int frame = Time.frameCount;
@@ -220,9 +228,18 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
 
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
         Transform t = _smr != null ? _smr.transform : transform;
-        dynamics.Evaluate(t.position, gDir, gravityStrength, furLength, dt);
+        dynamics.Evaluate(t.position, gDir, furLength, dt);
         _dynamicsStepFrame = frame;
         _dynamicsSteppedThisFrame = true;
+    }
+
+    void OnDrawGizmos()
+    {
+        if (dynamics == null || !dynamics.showGuideChain)
+            return;
+        if (!Application.isPlaying)
+            StepDynamicsIfNeeded();
+        dynamics.DrawGuideChainGizmos();
     }
 
     void ApplyPhysicsToMpb(MaterialPropertyBlock mpb)
@@ -233,6 +250,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
         mpb.SetFloat(GravityId, gravityStrength);
         mpb.SetVector(GravityDirId, gDir);
+        mpb.SetFloat(GravityPowerId, Mathf.Max(0.01f, gravityPower));
 
         if (dynamics != null && dynamics.enabled)
         {
@@ -246,6 +264,8 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
             mpb.SetFloat(UseFurChainId, 1f);
             mpb.SetFloat(FurChainCountId, dynamics.SampleCount);
             mpb.SetVectorArray(FurChainId, dynamics.BendSamples);
+            Vector3 erect = dynamics.ErectDirection;
+            mpb.SetVector(FurChainErectId, new Vector4(erect.x, erect.y, erect.z, 0f));
         }
         else
         {
@@ -262,6 +282,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
         finCompute.SetFloat(GravityId, gravityStrength);
         finCompute.SetVector(GravityDirId, gDir);
+        finCompute.SetFloat(GravityPowerId, Mathf.Max(0.01f, gravityPower));
 
         if (dynamics != null && dynamics.enabled)
         {
@@ -273,7 +294,11 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         finCompute.SetFloat(UseFurChainId, useChain ? 1f : 0f);
         finCompute.SetFloat(FurChainCountId, useChain ? dynamics.SampleCount : 0f);
         if (useChain)
+        {
             finCompute.SetVectorArray(FurChainId, dynamics.BendSamples);
+            Vector3 erect = dynamics.ErectDirection;
+            finCompute.SetVector(FurChainErectId, new Vector4(erect.x, erect.y, erect.z, 0f));
+        }
     }
 
     void OnDestroy()

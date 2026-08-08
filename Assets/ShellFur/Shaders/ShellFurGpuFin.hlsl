@@ -33,6 +33,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _FurLengthRandom;
     float  _Gravity;
     float4 _GravityDir;
+    float  _GravityPower;
     float  _Smoothness;
     float  _RimPower;
     float  _RimStrength;

@@ -35,6 +35,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _FurLengthRandom;
     float  _Gravity;
     float4 _GravityDir;
+    float  _GravityPower;
     float  _Smoothness;
     float  _RimPower;
     float  _RimStrength;
@@ -42,18 +43,28 @@ CBUFFER_START(UnityPerMaterial)
 CBUFFER_END
 
 // Guide-strand bend samples (world-space). Set via MaterialPropertyBlock.
-float4 _FurChain[9];
+// Size must match ShellFurDynamics.MaxNodes
+float4 _FurChain[17];
 float  _FurChainCount;
 float  _UseFurChain;
+float4 _FurChainErect;
 
-float3 SampleFurChainBendWS(float layer)
+float3 SampleFurChainOffsetWS(float layer)
 {
-    int count = (int)clamp(_FurChainCount, 1.0, 9.0);
+    int count = (int)clamp(_FurChainCount, 1.0, 17.0);
     float t = saturate(layer) * max((float)count - 1.0, 0.0);
     int i0 = (int)floor(t);
     int i1 = min(i0 + 1, count - 1);
     float f = t - (float)i0;
     return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
+}
+
+float3 GravityBendWS(float layer, float lengthScale)
+{
+    float h = saturate(layer);
+    float p = max(_GravityPower, 0.01);
+    float w = pow(h, p);
+    return normalize(_GravityDir.xyz + 1e-5) * (_Gravity * w * lengthScale);
 }
 
 float Hash21(float2 p)
@@ -197,9 +208,9 @@ Varyings ShellFurGpuVert(Attributes input)
 
     posWS += nSmoothWS * (layer * _FurLength);
     if (_UseFurChain > 0.5)
-        posWS += SampleFurChainBendWS(layer);
+        posWS += SampleFurChainOffsetWS(layer);
     else
-        posWS += normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer * layer * _FurLength);
+        posWS += GravityBendWS(layer, _FurLength);
 
     output.positionCS = TransformWorldToHClip(posWS);
     output.positionWS = posWS;
@@ -260,9 +271,9 @@ ShadowVaryings ShellFurGpuShadowVert(ShadowAttributes input)
     float3 nSmoothWS = float3(sv.sx, sv.sy, sv.sz);
     posWS += nSmoothWS * (layer * _FurLength);
     if (_UseFurChain > 0.5)
-        posWS += SampleFurChainBendWS(layer);
+        posWS += SampleFurChainOffsetWS(layer);
     else
-        posWS += normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer * layer * _FurLength);
+        posWS += GravityBendWS(layer, _FurLength);
 
 #if _CASTING_PUNCTUAL_LIGHT_SHADOW
     float3 lightDirectionWS = normalize(_LightPosition - posWS);

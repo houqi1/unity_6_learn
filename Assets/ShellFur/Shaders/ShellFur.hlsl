@@ -42,6 +42,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _FurLengthRandom;
     float  _Gravity;
     float4 _GravityDir;
+    float  _GravityPower;
     float  _Smoothness;
     float  _RimPower;
     float  _RimStrength;
@@ -61,20 +62,31 @@ CBUFFER_START(UnityPerMaterial)
     float  _FinOpacityPower;
 CBUFFER_END
 
-// Guide-strand bend samples (world-space offset vs straight hang + gravity).
-// Filled via MaterialPropertyBlock when dynamics is on — outside UnityPerMaterial.
-float4 _FurChain[9];
+// Guide additive offsets δ (CPU: chain - erectRest). Shell = n*h*L + δ when _UseFurChain.
+// Outside UnityPerMaterial — set via MaterialPropertyBlock.
+// Size must match ShellFurDynamics.MaxNodes
+float4 _FurChain[17];
 float  _FurChainCount;
 float  _UseFurChain;
+float4 _FurChainErect; // xyz = erect axis used by simulation (usually -gravity)
 
-float3 SampleFurChainBendWS(float layer)
+float3 SampleFurChainOffsetWS(float layer)
 {
-    int count = (int)clamp(_FurChainCount, 1.0, 9.0);
+    int count = (int)clamp(_FurChainCount, 1.0, 17.0);
     float t = saturate(layer) * max((float)count - 1.0, 0.0);
     int i0 = (int)floor(t);
     int i1 = min(i0 + 1, count - 1);
     float f = t - (float)i0;
     return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
+}
+
+// Static-only nonlinear gravity (used when dynamics is off).
+float3 GravityBendWS(float layer, float lengthScale)
+{
+    float h = saturate(layer);
+    float p = max(_GravityPower, 0.01);
+    float w = pow(h, p);
+    return normalize(_GravityDir.xyz + 1e-5) * (_Gravity * w * lengthScale);
 }
 
 // ---------------------------------------------------------------------------
@@ -128,19 +140,19 @@ float3 ResolveExtrudeNormalOS(float3 meshNormalOS, float4 vertexColor)
 
 float3 ApplyShellDisplacement(float3 positionOS, float3 extrudeNormalOS, float layer)
 {
-    // Radial extrusion along surface normal (per-vertex).
-    float3 offset = extrudeNormalOS * (layer * _FurLength);
+    // Classic shell base (always).
+    float3 offset = normalize(extrudeNormalOS + 1e-5) * (layer * _FurLength);
 
-    // Bend: guide chain samples (dynamics) or legacy quadratic gravity.
-    float3 bendWS;
     if (_UseFurChain > 0.5)
-        bendWS = SampleFurChainBendWS(layer);
+    {
+        // Additive guide offset δ = chainSample - root (HTML follow lag / hang).
+        offset += TransformWorldToObjectDir(SampleFurChainOffsetWS(layer), false);
+    }
     else
     {
-        float layer2 = layer * layer;
-        bendWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * _FurLength);
+        // Dynamics off: static nonlinear gravity.
+        offset += TransformWorldToObjectDir(GravityBendWS(layer, _FurLength), false);
     }
-    offset += TransformWorldToObjectDir(bendWS, false);
     return positionOS + offset;
 }
 
@@ -556,26 +568,18 @@ float ComputeFinSilhouette(float3 positionWS, float3 faceNormalA_OS, float3 face
 
 float3 ApplyFinDisplacement(float3 baseOS, float3 upOS, float height01, float silhouette)
 {
-    // Multi-segment fins sample this at several heights; h² gravity makes a drooping polyline/curve.
     float h = saturate(height01) * saturate(silhouette);
     float len = _FurLength * max(_FinLengthScale, 0.0);
-
-    // Micro lift on roots to reduce z-fight with shells / surface.
     float rootLift = _FinRootOffset * (1.0 - saturate(height01));
-
     float3 up = normalize(upOS + 1e-5);
-    float3 pos = baseOS + up * (len * h + rootLift);
+    float hBend = saturate(height01);
 
-    // Bend along fin height: guide chain or legacy h² gravity.
-    float3 bendWS;
+    // Base fin extrusion + optional additive guide offset.
+    float3 pos = baseOS + up * (len * h + rootLift);
     if (_UseFurChain > 0.5)
-        bendWS = SampleFurChainBendWS(saturate(height01));
+        pos += TransformWorldToObjectDir(SampleFurChainOffsetWS(hBend), false);
     else
-    {
-        float layer2 = h * h;
-        bendWS = normalize(_GravityDir.xyz + 1e-5) * (_Gravity * layer2 * len);
-    }
-    pos += TransformWorldToObjectDir(bendWS, false);
+        pos += TransformWorldToObjectDir(GravityBendWS(hBend, len), false);
     return pos;
 }
 

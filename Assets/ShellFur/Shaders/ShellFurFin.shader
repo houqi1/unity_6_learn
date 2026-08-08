@@ -23,6 +23,7 @@ Shader "Custom/ShellFurFin"
         [Header(Physics Bend)]
         _Gravity ("Gravity Strength", Range(0, 2)) = 0.35
         _GravityDir ("Gravity Direction", Vector) = (0, -1, 0, 0)
+        _GravityPower ("Gravity Falloff Power", Range(0.5, 4)) = 2
 
         [Header(Fins)]
         _FinExtrudeWeight ("Fin Extrude Weight", Range(0, 2)) = 1
