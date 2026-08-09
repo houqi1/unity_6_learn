@@ -40,6 +40,14 @@ CBUFFER_START(UnityPerMaterial)
     float  _RimPower;
     float  _RimStrength;
     float  _ShadowStrength;
+    float  _StrainEmissionEnable;
+    half4  _StrainEmissionColor;
+    float  _StrainEmissionIntensity;
+    float  _StrainEmissionTipPower;
+    float  _StrainEmissionDistMin;
+    float  _StrainEmissionDistMax;
+    float  _StrainEmissionDistPower;
+    float  _GuideOffsetScale;
 CBUFFER_END
 
 // Guide-strand bend samples (world-space). Set via MaterialPropertyBlock.
@@ -112,6 +120,41 @@ float3 SampleShellDynamicsOffsetWS(uint vertexId, float layer)
     if (_UseFurChain > 0.5)
         return SampleFurChainOffsetWS(layer);
     return GravityBendWS(layer, _FurLength);
+}
+
+// Understanding A: hang / rest ideal after chain-length normalization pack.
+// δ_rest(h) = normalize(gDir) * h * guideOffsetScale  (matches PackSamples at full hang)
+float3 SampleHangRestOffsetWS(float layer)
+{
+    float3 g = normalize(_GravityDir.xyz + 1e-5);
+    return g * (saturate(layer) * max(_GuideOffsetScale, 0.0));
+}
+
+// |current δ − rest δ|; 0 when dynamics chain is off.
+float ComputeChainStrainDistance(uint vertexId, float layer)
+{
+    if (_UseLocalGuides < 0.5 && _UseFurChain < 0.5)
+        return 0.0;
+    float3 dCur = SampleShellDynamicsOffsetWS(vertexId, layer);
+    float3 dRest = SampleHangRestOffsetWS(layer);
+    return length(dCur - dRest);
+}
+
+half3 EvaluateStrainEmission(float layer, float strandHeight, float strainDist)
+{
+    if (_StrainEmissionEnable < 0.5 || _StrainEmissionIntensity <= 1e-6)
+        return 0;
+
+    // Tip-only mask (layer along strand, clamped by strand height)
+    float tipH = saturate(layer / max(strandHeight, 1e-4));
+    float tipMask = pow(abs(tipH), max(_StrainEmissionTipPower, 0.01));
+
+    float d0 = max(_StrainEmissionDistMin, 0.0);
+    float d1 = max(_StrainEmissionDistMax, d0 + 1e-5);
+    float t = saturate((strainDist - d0) / (d1 - d0));
+    t = pow(abs(t), max(_StrainEmissionDistPower, 0.01));
+
+    return _StrainEmissionColor.rgb * (_StrainEmissionIntensity * tipMask * t);
 }
 
 float Hash21(float2 p)
@@ -232,6 +275,7 @@ struct Varyings
     float2 furUV      : TEXCOORD3;
     float  layer      : TEXCOORD4;
     float  fogFactor  : TEXCOORD5;
+    float  strainDist : TEXCOORD6;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
 
@@ -264,6 +308,8 @@ Varyings ShellFurGpuVert(Attributes input)
     output.furUV = TRANSFORM_TEX(uv, _FurMap);
     output.layer = layer;
     output.fogFactor = ComputeFogFactor(output.positionCS.z);
+    // |δ_current − δ_hangRest| for tip strain emission (understanding A)
+    output.strainDist = ComputeChainStrainDistance(input.vertexID, layer);
     return output;
 }
 
@@ -276,6 +322,7 @@ half4 ShellFurGpuFrag(Varyings input) : SV_Target
         discard;
     clip(alpha - 0.01);
     half3 color = ShadeShellFurGpu(input.positionWS, input.normalWS, input.uv, input.layer, strandHeight);
+    color += EvaluateStrainEmission(input.layer, strandHeight, input.strainDist);
     color = MixFog(color, input.fogFactor);
     return half4(color, alpha);
 }

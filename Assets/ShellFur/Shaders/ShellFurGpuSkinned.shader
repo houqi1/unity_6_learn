@@ -33,6 +33,17 @@ Shader "Custom/ShellFurGpuSkinned"
         _RimStrength ("Rim Strength", Range(0, 10)) = 0.25
         _ShadowStrength ("Self Shadow", Range(0, 10)) = 0.35
 
+        [Header(Tip Strain Emission)]
+        [Toggle] _StrainEmissionEnable ("Enable Strain Emission", Float) = 1
+        [HDR] _StrainEmissionColor ("Emission Color", Color) = (1, 0.55, 0.2, 1)
+        _StrainEmissionIntensity ("Emission Intensity", Range(0, 20)) = 2
+        _StrainEmissionTipPower ("Tip Mask Power", Range(0.5, 8)) = 2
+        _StrainEmissionDistMin ("Distance Min (deadzone)", Range(0, 0.2)) = 0.005
+        _StrainEmissionDistMax ("Distance Max (full)", Range(0.001, 0.5)) = 0.06
+        _StrainEmissionDistPower ("Distance Curve Power", Range(0.25, 4)) = 1
+        // Synced from dynamics.guideOffsetScale when chain is on (hang rest amplitude).
+        _GuideOffsetScale ("Guide Offset Scale (rest)", Float) = 0.08
+
         [Header(Rendering)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 0
     }

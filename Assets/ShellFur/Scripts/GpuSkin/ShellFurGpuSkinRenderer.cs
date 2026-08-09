@@ -31,6 +31,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     static readonly int UseFurChainId = Shader.PropertyToID("_UseFurChain");
     static readonly int FurChainErectId = Shader.PropertyToID("_FurChainErect");
     static readonly int UseLocalGuidesId = Shader.PropertyToID("_UseLocalGuides");
+    static readonly int GuideOffsetScaleId = Shader.PropertyToID("_GuideOffsetScale");
     static readonly int SkinnedVerticesId = Shader.PropertyToID("_SkinnedVertices");
     static readonly int BindVerticesId = Shader.PropertyToID("_BindVertices");
     static readonly int BoneMatricesId = Shader.PropertyToID("_BoneMatrices");
@@ -333,6 +334,10 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         mpb.SetVector(GravityDirId, gDir);
         mpb.SetFloat(GravityPowerId, Mathf.Max(0.01f, gravityPower));
 
+        // Hang-rest amplitude for strain emission (matches PackSamples normalization).
+        float guideOff = dynamics != null ? Mathf.Max(0f, dynamics.guideOffsetScale) : 0f;
+        mpb.SetFloat(GuideOffsetScaleId, guideOff);
+
         if (dynamics != null && dynamics.enabled)
         {
             if (!_dynamicsSteppedThisFrame || _dynamicsStepFrame != Time.frameCount)
@@ -342,6 +347,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (UseLocalGuidesMode && _localGuides != null && _localGuides.IsReady)
         {
             _localGuides.BindMpb(mpb);
+            mpb.SetFloat(GuideOffsetScaleId, guideOff);
             return;
         }
 

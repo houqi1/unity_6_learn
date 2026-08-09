@@ -90,6 +90,7 @@ Static-mesh fins on **`ShellFurRenderer`** are unchanged (CPU fin mesh + VS silh
    - Tune Grass Stiffness / Tip Softness / Guide Offset Scale
    - Optional: **Show Guide Chain** to debug all guide strands
    - Fallback: `GlobalChain` = single chain at SMR origin (legacy)
+10. **Tip strain emission** (material `Custom/ShellFurGpuSkinned`): tip shells glow by distance of current chain δ from hang rest (`gDir × h × GuideOffsetScale`); farther = stronger. Tune **Emission Color** (HDR), intensity, tip mask, distance min/max.
 
 Design doc: `Docs/GPU-Skinning-ShellFur-Design.md`.
 
