@@ -205,8 +205,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
-  m_LocalRotation: {x: -0.01840364, y: 0.9509802, z: -0.05770885, w: -0.30326188}
-  m_LocalPosition: {x: 29.42, y: 5.61, z: 13.768264}
+  m_LocalRotation: {x: 0.20207247, y: -0.09242124, z: 0.02135057, w: 0.9747662}
+  m_LocalPosition: {x: -11.67064, y: 31.883272, z: -57.159077}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -462,7 +462,7 @@ MonoBehaviour:
   finSilhouettePower: 0.38
   finBandStrength: 0.4
   finRootOffset: 0.0016
-  finLengthScale: 1.15
+  finLengthScale: 1.13
   finMinSilhouette: 0.001
   finSkipCoplanarDot: 0.9998
   finRootOpacity: 1
@@ -476,21 +476,33 @@ MonoBehaviour:
   gravityDirection: {x: 0, y: -1, z: 0}
   gravityPower: 2
   dynamics:
-    enabled: 0
-    mode: 0
+    enabled: 1
+    mode: 2
     nodeCount: 5
+    guideChainLength: 4
     lengthScale: 1.25
+    guideOffsetScale: 0.76
     particleGravity: 9.81
-    bendStiffness: 12
+    gravityAsRestPose: 0
     teleportDistance: 2
-    springStiffness: 80
-    springDamping: 6
+    followTension: 0.1
+    followTensionMin: 0.1
+    velocityDamping: 0.85
+    velocityDampingMin: 0.8
     nodeMass: 0.15
+    maxStretchLength: 0.12
+    grassStiffness: 0.05
+    grassTipSoftness: 0.5
+    grassWindStrength: 0
+    grassWindSpeed: 1.2
+    bendStiffness: 12
     verletDamping: 0.12
     verletIterations: 8
     showGuideChain: 0
     guideChainColor: {r: 0.2, g: 1, b: 1, a: 1}
     guideNodeRadius: 0.008
+  dynamicsResolution: 1
+  localGuideCount: 16
   shadowCasting: 1
   receiveShadows: 1
   drawInEditMode: 1
@@ -631,11 +643,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: be08f4ec488891543be03077bb1d8748, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0
+      value: 2.94
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: be08f4ec488891543be03077bb1d8748, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -2.68
+      value: -21.14
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: be08f4ec488891543be03077bb1d8748, type: 3}
       propertyPath: m_LocalRotation.w
@@ -695,7 +707,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: be08f4ec488891543be03077bb1d8748, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5866666021909216657, guid: be08f4ec488891543be03077bb1d8748, type: 3}
       propertyPath: m_Controller
@@ -728,7 +740,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &1494258773
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -773,20 +785,30 @@ MonoBehaviour:
   finOpacityPower: 0.63
   finCastShadows: 1
   finSkipCoplanarDot: 1
-  gravityStrength: 5.55
+  gravityStrength: 6.36
   gravityDirection: {x: 0, y: -1, z: 0}
   gravityPower: 2
   dynamics:
     enabled: 1
-    mode: 0
-    nodeCount: 5
+    mode: 2
+    nodeCount: 15
+    guideChainLength: 0.99
     lengthScale: 1.25
-    particleGravity: 9.81
-    bendStiffness: 0
+    guideOffsetScale: 1.07
+    particleGravity: 34
+    gravityAsRestPose: 1
     teleportDistance: 2
-    springStiffness: 80
-    springDamping: 6
-    nodeMass: 0.15
+    followTension: 65.4
+    followTensionMin: 34.7
+    velocityDamping: 0.915
+    velocityDampingMin: 0.901
+    nodeMass: 0.58
+    maxStretchLength: 0.4
+    grassStiffness: 0.5
+    grassTipSoftness: 0.5
+    grassWindStrength: 0
+    grassWindSpeed: 1.2
+    bendStiffness: 0
     verletDamping: 0.12
     verletIterations: 8
     showGuideChain: 1
@@ -881,7 +903,7 @@ Transform:
   m_GameObject: {fileID: 1494258772}
   serializedVersion: 2
   m_LocalRotation: {x: -0.12439815, y: -0.9677485, z: -0.14341062, w: -0.16559431}
-  m_LocalPosition: {x: 11.38, y: 20.003, z: -34.354}
+  m_LocalPosition: {x: 21.8, y: 12.17, z: -38.43}
   m_LocalScale: {x: 9.1317, y: 9.1317, z: 9.1317}
   m_ConstrainProportionsScale: 0
   m_Children: []

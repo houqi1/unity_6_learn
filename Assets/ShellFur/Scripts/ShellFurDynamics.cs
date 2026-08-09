@@ -3,7 +3,9 @@ using UnityEngine;
 /// <summary>
 /// Guide-strand dynamics for shell fur.
 /// Spring / Verlet / Grass = different chain sims.
-/// Shell offset: sample chain at shell layer h, δ = (chainPos(h) - root) * guideOffsetScale.
+/// Sim uses real chain length (displacement sensitivity only).
+/// Shell pack: δ̂ = (chainPos − root) / chainLen, then δ = δ̂ * guideOffsetScale
+/// (shape normalized so length no longer couples into shell amplitude).
 /// Shader: final = pure extrude + δ; GravityBend off while UseFurChain.
 /// </summary>
 [System.Serializable]
@@ -42,19 +44,22 @@ public class ShellFurDynamics
     public int nodeCount = 2;
 
     [Tooltip(
-        "Absolute guide-chain length in world units (root → tip along the strand).\n" +
-        "0 = auto: Fur Length × Length Scale. >0 overrides and is independent of fur length.")]
+        "Simulation chain length in world units (root → tip). Affects segment length and " +
+        "how strongly the chain lags / responds to anchor motion — not shell amplitude.\n" +
+        "0 = auto: Fur Length × Length Scale. >0 overrides.")]
     [Min(0f)]
     public float guideChainLength = 0f;
 
-    [Tooltip("When Guide Chain Length is 0: chain length = furLength × this scale.")]
+    [Tooltip("When Guide Chain Length is 0: sim chain length = furLength × this scale.")]
     [Min(0.01f)]
     public float lengthScale = 1.15f;
 
     [Header("Shell ↔ chain mapping")]
     [Tooltip(
-        "Shell layer h ∈ [0,1] samples the guide chain, then shell offset = (chainPos(h) - root) * this scale.\n" +
-        "1 = full chain offset; 0 = no chain influence; >1 amplifies sway/hang.")]
+        "Shell response to the guide shape (world units at full normalized extent).\n" +
+        "Pack: δ = ((chainPos − root) / simChainLen) × this scale.\n" +
+        "Independent of sim chain length. 0 = no chain influence.\n" +
+        "Old coupled look ≈ previous scale × previous chain length (e.g. ~furLength).")]
     [Min(0f)]
     public float guideOffsetScale = 1f;
 
@@ -674,18 +679,22 @@ public class ShellFurDynamics
     }
 
     /// <summary>
-    /// Pack additive shell offsets for GPU lookup by layer h ∈ [0,1]:
-    ///   δ(h) = (chainWorldPos(h) - root) * guideOffsetScale
+    /// Pack additive shell offsets for GPU lookup by layer h ∈ [0,1].
+    /// Normalize by sim chain length so shell amplitude is not coupled to it:
+    ///   δ̂(h) = (chainWorldPos(h) - root) / chainLen
+    ///   δ(h)  = δ̂(h) * guideOffsetScale
     /// Shader samples by shell layer and adds to pure normal extrude.
     /// </summary>
     void PackSamples(Vector3 anchor)
     {
         int n = _nodeCount;
-        float scale = Mathf.Max(0f, guideOffsetScale);
+        float invLen = 1f / Mathf.Max(_chainLen, 0.001f);
+        float scale = Mathf.Max(0f, guideOffsetScale) * invLen;
 
         for (int i = 0; i < n; i++)
         {
             float h = n <= 1 ? 0f : (float)i / (n - 1);
+            // δ = ((pos - root) / chainLen) * guideOffsetScale
             Vector3 delta = (_pos[i] - anchor) * scale;
             _samples[i] = new Vector4(delta.x, delta.y, delta.z, h);
         }

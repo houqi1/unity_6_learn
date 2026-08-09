@@ -63,7 +63,7 @@ CBUFFER_START(UnityPerMaterial)
 CBUFFER_END
 
 // Guide additive offsets δ. Shell = pure extrude (n*h*L) + δ when _UseFurChain; GravityBend off.
-// CPU: δ(h) = (chainPos(h) - root) * guideOffsetScale; shader samples by shell layer h.
+// CPU: δ(h) = ((chainPos(h)-root)/chainLen) * guideOffsetScale; shader samples by layer h.
 // Outside UnityPerMaterial — set via MaterialPropertyBlock.
 // Size must match ShellFurDynamics.MaxNodes
 float4 _FurChain[17];
