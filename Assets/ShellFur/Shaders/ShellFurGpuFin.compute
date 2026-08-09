@@ -60,6 +60,19 @@ float4 _FurChain[17];
 float _FurChainCount;
 float _UseFurChain;
 
+// Local Grass guides — match ShellFurGpuSkinning.hlsl / ShellFurGpuSkinTypes.GuideWeight
+struct GuideWeight
+{
+    float i0, i1, i2, pad0;
+    float w0, w1, w2, pad1;
+};
+StructuredBuffer<float4> _GuideChains;
+StructuredBuffer<GuideWeight> _VertexGuideWeights;
+float _GuideCount;
+float _GuideNodeCount;
+float _GuideStride;
+float _UseLocalGuides;
+
 float3 SkinnedPos(uint i)
 {
     SkinnedVertex v = _SkinnedVertices[i];
@@ -131,6 +144,30 @@ float3 SampleFurChainOffsetWS(float layer)
     return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
 }
 
+float3 SampleOneGuideOffsetWS(uint guideId, float layer)
+{
+    uint stride = (uint)max(_GuideStride, 1.0);
+    uint gcount = (uint)max(_GuideCount, 1.0);
+    uint gid = min(guideId, gcount - 1u);
+    int count = (int)clamp(_GuideNodeCount, 1.0, 17.0);
+    float t = saturate(layer) * max((float)count - 1.0, 0.0);
+    int i0 = (int)floor(t);
+    int i1 = min(i0 + 1, count - 1);
+    float f = t - (float)i0;
+    uint base = gid * stride;
+    return lerp(_GuideChains[base + (uint)i0].xyz, _GuideChains[base + (uint)i1].xyz, f);
+}
+
+float3 SampleLocalGuidesOffsetWS(uint vertexId, float layer)
+{
+    GuideWeight gw = _VertexGuideWeights[vertexId];
+    float3 d = 0;
+    d += SampleOneGuideOffsetWS((uint)gw.i0, layer) * gw.w0;
+    d += SampleOneGuideOffsetWS((uint)gw.i1, layer) * gw.w1;
+    d += SampleOneGuideOffsetWS((uint)gw.i2, layer) * gw.w2;
+    return d;
+}
+
 float3 GravityBendWS(float layer, float lengthScale)
 {
     float h = saturate(layer);
@@ -139,7 +176,7 @@ float3 GravityBendWS(float layer, float lengthScale)
     return normalize(_GravityDir + 1e-5) * (_Gravity * w * lengthScale);
 }
 
-float3 ExtrudeFinPoint(float3 baseWS, float3 upWS, float height01, float silhouette)
+float3 ExtrudeFinPoint(uint vertexId, float3 baseWS, float3 upWS, float height01, float silhouette)
 {
     float h = saturate(height01) * saturate(silhouette);
     float len = _FurLength * max(_FinLengthScale, 0.0);
@@ -147,7 +184,9 @@ float3 ExtrudeFinPoint(float3 baseWS, float3 upWS, float height01, float silhoue
     float3 up = normalize(upWS + 1e-5);
     float hBend = saturate(height01);
     float3 pos = baseWS + up * (len * h + rootLift);
-    if (_UseFurChain > 0.5)
+    if (_UseLocalGuides > 0.5)
+        pos += SampleLocalGuidesOffsetWS(vertexId, hBend);
+    else if (_UseFurChain > 0.5)
         pos += SampleFurChainOffsetWS(hBend);
     else
         pos += GravityBendWS(hBend, len);
@@ -213,10 +252,10 @@ void CSGenerateFins(uint3 id : SV_DispatchThreadID)
         float h0 = (float)s / (float)segments;
         float h1 = (float)(s + 1u) / (float)segments;
 
-        float3 r0 = ExtrudeFinPoint(p0, up0, h0, sil);
-        float3 r1 = ExtrudeFinPoint(p1, up1, h0, sil);
-        float3 t0 = ExtrudeFinPoint(p0, up0, h1, sil);
-        float3 t1 = ExtrudeFinPoint(p1, up1, h1, sil);
+        float3 r0 = ExtrudeFinPoint(e.v0, p0, up0, h0, sil);
+        float3 r1 = ExtrudeFinPoint(e.v1, p1, up1, h0, sil);
+        float3 t0 = ExtrudeFinPoint(e.v0, p0, up0, h1, sil);
+        float3 t1 = ExtrudeFinPoint(e.v1, p1, up1, h1, sil);
 
         // Two triangles: r0-r1-t1, r0-t1-t0 (non-indexed list)
         uint base = start + s * 6u;

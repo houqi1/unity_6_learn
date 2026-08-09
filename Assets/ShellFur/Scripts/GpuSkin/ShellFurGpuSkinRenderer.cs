@@ -30,6 +30,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     static readonly int FurChainCountId = Shader.PropertyToID("_FurChainCount");
     static readonly int UseFurChainId = Shader.PropertyToID("_UseFurChain");
     static readonly int FurChainErectId = Shader.PropertyToID("_FurChainErect");
+    static readonly int UseLocalGuidesId = Shader.PropertyToID("_UseLocalGuides");
     static readonly int SkinnedVerticesId = Shader.PropertyToID("_SkinnedVertices");
     static readonly int BindVerticesId = Shader.PropertyToID("_BindVertices");
     static readonly int BoneMatricesId = Shader.PropertyToID("_BoneMatrices");
@@ -129,9 +130,23 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     [Range(0.5f, 4f)]
     [SerializeField] float gravityPower = 2f;
 
-    [Header("Dynamics (guide strand: root pinned to object)")]
-    [Tooltip("Root pinned to object. Modes: Spring / Verlet / Grass. Shell = pure extrude + chain δ (no GravityBend while chain on).")]
+    [Header("Dynamics (guide strand)")]
+    [Tooltip("Spring / Verlet / Grass. Shell = pure extrude + chain δ (no GravityBend while chain on).")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
+
+    public enum DynamicsResolution
+    {
+        /// <summary>Single chain anchored at SMR / object origin (legacy).</summary>
+        GlobalChain = 0,
+        /// <summary>Sparse Grass guides on skinned surface; per-vertex blend of 3 nearest.</summary>
+        LocalGuides = 1
+    }
+
+    [Tooltip("GlobalChain = one chain at transform. LocalGuides = Grass per surface guide (follows animation).")]
+    [SerializeField] DynamicsResolution dynamicsResolution = DynamicsResolution.LocalGuides;
+    [Tooltip("Number of local Grass guide strands (LocalGuides). Built from bind fur verts.")]
+    [Range(1, ShellFurLocalGrassGuides.MaxGuides)]
+    [SerializeField] int localGuideCount = 16;
 
     [Header("Rendering")]
     [SerializeField] ShadowCastingMode shadowCasting = ShadowCastingMode.On;
@@ -157,6 +172,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     GraphicsBuffer _finCounterBuffer;
     GraphicsBuffer _finArgsBuffer;
     ShellFurBoneBuffer _boneBuffer;
+    ShellFurLocalGrassGuides _localGuides;
     MaterialPropertyBlock _mpb;
     MaterialPropertyBlock _mpbFin;
     Matrix4x4[] _instanceMatrices;
@@ -201,6 +217,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         RestoreSourceRendererState();
         ReleaseGpu();
         dynamics?.ResetState();
+        _localGuides?.ResetAll();
         _dynamicsSteppedThisFrame = false;
         _dynamicsStepFrame = -1;
     }
@@ -208,10 +225,21 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     void LateUpdate()
     {
         dynamics?.ValidateNodeCount();
-        StepDynamicsIfNeeded();
+        // Local guides need fresh bone matrices — stepped in PrepareSkinFrame after bone upload.
+        if (!UseLocalGuidesMode)
+            StepDynamicsIfNeeded();
         if (dynamics != null && dynamics.showGuideChain && Application.isPlaying)
-            dynamics.DrawGuideChainDebugLines();
+        {
+            if (UseLocalGuidesMode)
+                _localGuides?.DrawDebugLines();
+            else
+                dynamics.DrawGuideChainDebugLines();
+        }
     }
+
+    bool UseLocalGuidesMode =>
+        dynamics != null && dynamics.enabled &&
+        dynamicsResolution == DynamicsResolution.LocalGuides;
 
     void StepDynamicsIfNeeded()
     {
@@ -227,8 +255,30 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
             dt = 1f / 60f;
 
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
-        Transform t = _smr != null ? _smr.transform : transform;
-        dynamics.Evaluate(t.position, gDir, furLength, dt, gravityStrength, gravityPower);
+
+        if (UseLocalGuidesMode)
+        {
+            EnsureLocalGuidesBuilt();
+            if (_localGuides != null && _localGuides.IsReady &&
+                _boneBuffer != null && _boneBuffer.Matrices != null)
+            {
+                _localGuides.StepAndUpload(
+                    _boneBuffer.Matrices,
+                    _boneBuffer.BoneCount,
+                    dynamics,
+                    gDir,
+                    furLength,
+                    dt,
+                    gravityStrength,
+                    gravityPower);
+            }
+        }
+        else
+        {
+            Transform t = _smr != null ? _smr.transform : transform;
+            dynamics.Evaluate(t.position, gDir, furLength, dt, gravityStrength, gravityPower);
+        }
+
         _dynamicsStepFrame = frame;
         _dynamicsSteppedThisFrame = true;
     }
@@ -239,7 +289,38 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
             return;
         if (!Application.isPlaying)
             StepDynamicsIfNeeded();
-        dynamics.DrawGuideChainGizmos();
+        if (UseLocalGuidesMode)
+            _localGuides?.DrawDebugGizmos();
+        else
+            dynamics.DrawGuideChainGizmos();
+    }
+
+    void EnsureLocalGuidesBuilt()
+    {
+        if (!UseLocalGuidesMode)
+            return;
+        int want = Mathf.Clamp(localGuideCount, 1, ShellFurLocalGrassGuides.MaxGuides);
+        if (_localGuides != null && _localGuides.IsReady &&
+            _localGuides.VertexCount == (_bindVerts != null ? _bindVerts.Length : 0) &&
+            _localGuides.RequestedGuideCount == want)
+            return;
+        RebuildLocalGuides();
+    }
+
+    void RebuildLocalGuides()
+    {
+        _localGuides?.Dispose();
+        _localGuides = null;
+        if (_bindVerts == null || _bindVerts.Length == 0 || dynamics == null)
+            return;
+
+        _localGuides = new ShellFurLocalGrassGuides();
+        int k = Mathf.Clamp(localGuideCount, 1, ShellFurLocalGrassGuides.MaxGuides);
+        if (!_localGuides.Build(_bindVerts, k, dynamics))
+        {
+            _localGuides.Dispose();
+            _localGuides = null;
+        }
     }
 
     void ApplyPhysicsToMpb(MaterialPropertyBlock mpb)
@@ -258,6 +339,13 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
                 StepDynamicsIfNeeded();
         }
 
+        if (UseLocalGuidesMode && _localGuides != null && _localGuides.IsReady)
+        {
+            _localGuides.BindMpb(mpb);
+            return;
+        }
+
+        ShellFurLocalGrassGuides.BindDisabledMpb(mpb);
         bool useChain = dynamics != null && dynamics.enabled && dynamics.HasSamples;
         if (useChain)
         {
@@ -290,6 +378,17 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
                 StepDynamicsIfNeeded();
         }
 
+        if (UseLocalGuidesMode && _localGuides != null && _localGuides.IsReady)
+        {
+            if (_kernelGenFins >= 0)
+                _localGuides.SetComputeBuffers(finCompute, _kernelGenFins);
+            finCompute.SetFloat(UseLocalGuidesId, 1f);
+            finCompute.SetFloat(UseFurChainId, 0f);
+            return;
+        }
+
+        if (_kernelGenFins >= 0)
+            ShellFurLocalGrassGuides.BindDisabledCompute(finCompute, _kernelGenFins);
         bool useChain = dynamics != null && dynamics.enabled && dynamics.HasSamples;
         finCompute.SetFloat(UseFurChainId, useChain ? 1f : 0f);
         finCompute.SetFloat(FurChainCountId, useChain ? dynamics.SampleCount : 0f);
@@ -325,6 +424,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         shellCount = Mathf.Clamp(shellCount, 2, MaxShells);
         furLength = Mathf.Max(0.001f, furLength);
         finSegments = Mathf.Clamp(finSegments, MinFinSegments, MaxFinSegments);
+        localGuideCount = Mathf.Clamp(localGuideCount, 1, ShellFurLocalGrassGuides.MaxGuides);
         if (furMaterialSlots == null || furMaterialSlots.Length == 0)
             furMaterialSlots = new[] { 0 };
         CacheRefs();
@@ -385,6 +485,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
 
         EnsureSkinKernel();
         BuildFinGpuResources();
+        RebuildLocalGuides();
 
         _mpb = new MaterialPropertyBlock();
         _mpbFin = new MaterialPropertyBlock();
@@ -396,7 +497,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (logOnce && !_logged)
         {
             Debug.Log(
-                $"[{nameof(ShellFurGpuSkinRenderer)}] Ready verts={vcount} edges={_finEdgeCount} maxFinVerts={_finMaxVertices} bones={source.bindposes?.Length}",
+                $"[{nameof(ShellFurGpuSkinRenderer)}] Ready verts={vcount} edges={_finEdgeCount} maxFinVerts={_finMaxVertices} bones={source.bindposes?.Length} localGuides={_localGuides?.GuideCount ?? 0}",
                 this);
             _logged = true;
         }
@@ -699,6 +800,8 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     {
         _boneBuffer?.Dispose();
         _boneBuffer = null;
+        _localGuides?.Dispose();
+        _localGuides = null;
         ReleaseBuffer(ref _bindBuffer);
         ReleaseBuffer(ref _skinnedBuffer);
         ReleaseBuffer(ref _finEdgeBuffer);
@@ -747,6 +850,10 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
 
         int groups = Mathf.CeilToInt(vcount / 64f);
         skinCompute.Dispatch(_kernelSkin, Mathf.Max(1, groups), 1, 1);
+
+        // Local Grass anchors use the same bone matrices just uploaded.
+        if (UseLocalGuidesMode)
+            StepDynamicsIfNeeded();
     }
 
     void EnsureFinCapacityMatchesSegments()

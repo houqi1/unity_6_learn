@@ -49,6 +49,20 @@ float  _FurChainCount;
 float  _UseFurChain;
 float4 _FurChainErect;
 
+// Local Grass guides (sparse). Match ShellFurGpuSkinTypes.GuideWeight + packed chains.
+struct GuideWeight
+{
+    float i0, i1, i2, pad0;
+    float w0, w1, w2, pad1;
+};
+
+StructuredBuffer<float4> _GuideChains;       // GuideCount * stride (stride=17)
+StructuredBuffer<GuideWeight> _VertexGuideWeights;
+float _GuideCount;
+float _GuideNodeCount;
+float _GuideStride;
+float _UseLocalGuides;
+
 float3 SampleFurChainOffsetWS(float layer)
 {
     int count = (int)clamp(_FurChainCount, 1.0, 17.0);
@@ -59,12 +73,45 @@ float3 SampleFurChainOffsetWS(float layer)
     return lerp(_FurChain[i0].xyz, _FurChain[i1].xyz, f);
 }
 
+float3 SampleOneGuideOffsetWS(uint guideId, float layer)
+{
+    uint stride = (uint)max(_GuideStride, 1.0);
+    uint gcount = (uint)max(_GuideCount, 1.0);
+    uint gid = min(guideId, gcount - 1u);
+    int count = (int)clamp(_GuideNodeCount, 1.0, 17.0);
+    float t = saturate(layer) * max((float)count - 1.0, 0.0);
+    int i0 = (int)floor(t);
+    int i1 = min(i0 + 1, count - 1);
+    float f = t - (float)i0;
+    uint base = gid * stride;
+    return lerp(_GuideChains[base + (uint)i0].xyz, _GuideChains[base + (uint)i1].xyz, f);
+}
+
+float3 SampleLocalGuidesOffsetWS(uint vertexId, float layer)
+{
+    GuideWeight gw = _VertexGuideWeights[vertexId];
+    float3 d = 0;
+    d += SampleOneGuideOffsetWS((uint)gw.i0, layer) * gw.w0;
+    d += SampleOneGuideOffsetWS((uint)gw.i1, layer) * gw.w1;
+    d += SampleOneGuideOffsetWS((uint)gw.i2, layer) * gw.w2;
+    return d;
+}
+
 float3 GravityBendWS(float layer, float lengthScale)
 {
     float h = saturate(layer);
     float p = max(_GravityPower, 0.01);
     float w = pow(h, p);
     return normalize(_GravityDir.xyz + 1e-5) * (_Gravity * w * lengthScale);
+}
+
+float3 SampleShellDynamicsOffsetWS(uint vertexId, float layer)
+{
+    if (_UseLocalGuides > 0.5)
+        return SampleLocalGuidesOffsetWS(vertexId, layer);
+    if (_UseFurChain > 0.5)
+        return SampleFurChainOffsetWS(layer);
+    return GravityBendWS(layer, _FurLength);
 }
 
 float Hash21(float2 p)
@@ -207,10 +254,7 @@ Varyings ShellFurGpuVert(Attributes input)
     float3 nSmoothWS = float3(sv.sx, sv.sy, sv.sz);
 
     posWS += nSmoothWS * (layer * _FurLength);
-    if (_UseFurChain > 0.5)
-        posWS += SampleFurChainOffsetWS(layer);
-    else
-        posWS += GravityBendWS(layer, _FurLength);
+    posWS += SampleShellDynamicsOffsetWS(input.vertexID, layer);
 
     output.positionCS = TransformWorldToHClip(posWS);
     output.positionWS = posWS;
@@ -270,10 +314,7 @@ ShadowVaryings ShellFurGpuShadowVert(ShadowAttributes input)
     float3 posWS = float3(sv.px, sv.py, sv.pz);
     float3 nSmoothWS = float3(sv.sx, sv.sy, sv.sz);
     posWS += nSmoothWS * (layer * _FurLength);
-    if (_UseFurChain > 0.5)
-        posWS += SampleFurChainOffsetWS(layer);
-    else
-        posWS += GravityBendWS(layer, _FurLength);
+    posWS += SampleShellDynamicsOffsetWS(input.vertexID, layer);
 
 #if _CASTING_PUNCTUAL_LIGHT_SHADOW
     float3 lightDirectionWS = normalize(_LightPosition - posWS);

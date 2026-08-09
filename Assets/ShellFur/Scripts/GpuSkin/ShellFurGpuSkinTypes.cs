@@ -47,6 +47,19 @@ public static class ShellFurGpuSkinTypes
     }
 
     /// <summary>
+    /// Per-vertex blend of up to 3 local Grass guides (must match HLSL GuideWeight).
+    /// Indices are guide ids [0, GuideCount), not mesh vertex ids.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GuideWeight
+    {
+        public float i0, i1, i2, pad0;
+        public float w0, w1, w2, pad1;
+
+        public const int Stride = sizeof(float) * 8; // 32
+    }
+
+    /// <summary>
     /// Manifold edge for CS fin generation (indices into skinned / bind vertex buffer).
     /// Must match HLSL FinEdge in ShellFurGpuFin.compute.
     /// </summary>

@@ -82,6 +82,14 @@ Static-mesh fins on **`ShellFurRenderer`** are unchanged (CPU fin mesh + VS silh
 6. Assign **Fin Compute** = `Assets/ShellFur/Shaders/ShellFurGpuFin.compute` (Editor auto-loads if empty).
 7. Set **Fur Material Slots** (e.g. tails `1,2`), enable hide source slots / hide base as needed.
 8. Enable **Fins (CS B2)**; tune segments / silhouette / opacity. Play animation — shells + fins follow bones.
+9. **Local Grass guides (animation sway):**
+   - Enable **Dynamics**
+   - **Dynamics Resolution** = `LocalGuides` (default)
+   - Mode is forced to **Grass** for each guide (hang ideal = gravity)
+   - **Local Guide Count** ≈ 12–16
+   - Tune Grass Stiffness / Tip Softness / Guide Offset Scale
+   - Optional: **Show Guide Chain** to debug all guide strands
+   - Fallback: `GlobalChain` = single chain at SMR origin (legacy)
 
 Design doc: `Docs/GPU-Skinning-ShellFur-Design.md`.
 

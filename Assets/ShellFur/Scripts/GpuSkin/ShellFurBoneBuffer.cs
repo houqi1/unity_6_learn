@@ -9,6 +9,9 @@ public class ShellFurBoneBuffer : System.IDisposable
     public GraphicsBuffer Buffer { get; private set; }
     public int BoneCount { get; private set; }
 
+    /// <summary>CPU copy of last uploaded skin matrices (bone.localToWorld * bindPose).</summary>
+    public Matrix4x4[] Matrices => _cache;
+
     Matrix4x4[] _cache;
     static readonly int BoneMatricesId = Shader.PropertyToID("_BoneMatrices");
     static readonly int BoneCountId = Shader.PropertyToID("_BoneCount");
