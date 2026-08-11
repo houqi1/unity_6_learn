@@ -123,7 +123,7 @@ public class ShellFurRenderer : MonoBehaviour
     [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand: root pinned to object)")]
-    [Tooltip("Root pinned to object. Modes: Spring / Verlet / Grass (HTML hang constraints). Shell = pure extrude + chain δ (no GravityBend while chain on).")]
+    [Tooltip("Root pinned to object. Modes: Spring / Verlet / Grass / Bone (MaxScript tip spring). Shell = pure extrude + chain δ (no GravityBend while chain on).")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     [Header("Rendering")]

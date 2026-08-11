@@ -2,7 +2,7 @@ using UnityEngine;
 
 /// <summary>
 /// Guide-strand dynamics for shell fur.
-/// Spring / Verlet / Grass = different chain sims.
+/// Spring / Verlet / Grass / Bone = different chain sims.
 /// Sim uses real chain length (displacement sensitivity only).
 /// Shell pack: δ̂ = (chainPos − root) / chainLen, then δ = δ̂ * guideOffsetScale
 /// (shape normalized so length no longer couples into shell amplitude).
@@ -21,7 +21,13 @@ public class ShellFurDynamics
         /// Interactive Grass: fixed segment length + positional stiffness toward hang ideal.
         /// Shell base = pure extrude; hang/sway only from this chain (no static GravityBend rest).
         /// </summary>
-        Grass = 2
+        Grass = 2,
+        /// <summary>
+        /// MaxScript bone chain: rigid FK rest tip (gravity-aligned, chain_rest=0) as spring
+        /// target, tip velocity spring-damper, hard length constraint (rotate only).
+        /// Shell pack same as Grass (pure extrude + chain δ).
+        /// </summary>
+        Bone = 3
     }
 
     public const int MaxNodes = 17;
@@ -31,11 +37,12 @@ public class ShellFurDynamics
     const float MaxFrameDt = 0.1f;
     const float FixedStep = 1f / 60f;
     const int MaxSubstepsVerlet = 8;
+    const int MaxSubstepsBone = 8;
 
     [Tooltip("Enable guide-strand dynamics.")]
     public bool enabled;
 
-    [Tooltip("Spring = follow spring. Verlet = rope. Grass = HTML fixed-length hang constraints.")]
+    [Tooltip("Spring = follow spring. Verlet = rope. Grass = HTML hang. Bone = MaxScript tip spring-damper (gravity rest).")]
     public Mode mode = Mode.Spring;
 
     [Header("Chain")]
@@ -63,14 +70,14 @@ public class ShellFurDynamics
     [Min(0f)]
     public float guideOffsetScale = 1f;
 
-    [Tooltip("Gravity m/s² in force integration (Spring/Verlet only; ignored in Grass mode).")]
+    [Tooltip("Gravity m/s² in force integration (Spring/Verlet only; ignored in Grass/Bone).")]
     [Min(0f)]
     public float particleGravity = 2f;
 
     [Tooltip(
         "Spring/Verlet only. ON: gravity is NOT added to forces; rest targets are static gravity shell offsets.\n" +
         "OFF: live g in forces; rest target is previous node / root.\n" +
-        "Ignored in Grass mode (hang ideal = gravity dir; shell base stays pure extrude).")]
+        "Ignored in Grass/Bone (Bone rest = gravity-aligned rigid FK; shell base pure extrude).")]
     public bool gravityAsRestPose;
 
     [Min(0f)]
@@ -117,6 +124,15 @@ public class ShellFurDynamics
     [Tooltip("Wind phase speed (rad-ish per second scaled). HTML uses ~0.02 per frame.")]
     [Min(0f)]
     public float grassWindSpeed = 1.2f;
+
+    [Header("Bone (MaxScript tip spring-damper)")]
+    [Tooltip("Per 1/60s: vel += (rigidTip - tip) * stiffness. HTML _stiffness ~0.01–0.5, default 0.1.")]
+    [Range(0.01f, 0.5f)]
+    public float boneStiffness = 0.1f;
+
+    [Tooltip("Per 1/60s velocity keep: vel *= damping. HTML _damping ~0.5–0.99, default 0.7.")]
+    [Range(0.5f, 0.99f)]
+    public float boneDamping = 0.7f;
 
     [Header("Verlet (optional)")]
     [Min(0f)]
@@ -285,6 +301,22 @@ public class ShellFurDynamics
                 InitChainSpaced(anchorPosition, _erectDir, nodes, segLen);
             StepGrassConstraint(anchorPosition, gDir, segLen, frameDt);
         }
+        else if (mode == Mode.Bone)
+        {
+            // Gravity rest: spaced along gDir (HTML chain points down).
+            if (NeedsVerletSpacing(segLen))
+                InitChainSpaced(anchorPosition, gDir, nodes, segLen);
+
+            // HTML simulate_frame is per display frame (~60Hz). Substep at FixedStep for match.
+            float acc = frameDt;
+            int steps = 0;
+            while (acc > MinDt && steps < MaxSubstepsBone)
+            {
+                SubstepMaxScriptBone(anchorPosition, gDir, segLen);
+                acc -= FixedStep;
+                steps++;
+            }
+        }
         else
         {
             if (NeedsVerletSpacing(segLen))
@@ -335,6 +367,8 @@ public class ShellFurDynamics
         grassTipSoftness = Mathf.Clamp01(grassTipSoftness);
         grassWindStrength = Mathf.Max(0f, grassWindStrength);
         grassWindSpeed = Mathf.Max(0f, grassWindSpeed);
+        boneStiffness = Mathf.Clamp(boneStiffness, 0.01f, 0.5f);
+        boneDamping = Mathf.Clamp(boneDamping, 0.5f, 0.99f);
         guideOffsetScale = Mathf.Max(0f, guideOffsetScale);
         guideChainLength = Mathf.Max(0f, guideChainLength);
         lengthScale = Mathf.Max(0.01f, lengthScale);
@@ -389,6 +423,9 @@ public class ShellFurDynamics
     {
         if (mode == Mode.Grass)
             InitChainSpaced(anchor, _erectDir, nodes, segLen);
+        else if (mode == Mode.Bone)
+            // HTML: chain points down along gravity (rest pose).
+            InitChainSpaced(anchor, gDir, nodes, segLen);
         else if (mode == Mode.Spring && gravityAsRestPose)
             InitChainAtGravityRest(anchor, gDir, nodes, furLength, gStr, gPow);
         else if (mode == Mode.Spring)
@@ -463,6 +500,80 @@ public class ShellFurDynamics
             return true;
         // If all piled on root, space out once for Verlet/Grass rope.
         return (_pos[1] - _pos[0]).sqrMagnitude < (segLen * 0.01f) * (segLen * 0.01f);
+    }
+
+    /// <summary>
+    /// MaxScript bone chain (exact HTML port, one display frame @ 60Hz semantics):
+    /// - Root bone kinematic: always aims gravity (gDir); tip = anchor + gDir * segLen
+    /// - Child bones i≥1: rigid FK rest tip (chain_rest=0 ⇒ co-linear with parent)
+    /// - vel += (rigidTip - tip) * stiffness; vel *= damping; tip += vel
+    /// - base = parent tip; tip reprojected to segLen (rotate only, never stretch)
+    /// - aim bone at simulated tip (parentDir for next getRigid)
+    /// Shell pack: same PackSamples as Grass (pure extrude + δ).
+    /// </summary>
+    void SubstepMaxScriptBone(Vector3 anchor, Vector3 gDir, float segLen)
+    {
+        int n = _nodeCount;
+        if (n < 2)
+            return;
+
+        segLen = Mathf.Max(segLen, 1e-5f);
+        float stiffness = Mathf.Clamp(boneStiffness, 0.01f, 0.5f);
+        float damping = Mathf.Clamp(boneDamping, 0.5f, 0.99f);
+
+        // Root joint + root bone (kinematic gravity rest), like chain[0].rot = π/2 down.
+        _pos[0] = anchor;
+        _vel[0] = Vector3.zero;
+        _prev[0] = anchor;
+
+        Vector3 parentDir = gDir.sqrMagnitude > 1e-8f ? gDir.normalized : Vector3.down;
+        _pos[1] = _pos[0] + parentDir * segLen;
+        _vel[1] = Vector3.zero;
+        _prev[1] = _pos[1];
+
+        // Bones 1 .. (n-2): free tips write _pos[2] .. _pos[n-1]
+        // (HTML: for i = 1; i < _bone_num; i++) with joint count = bone_num + final tip
+        // mapped as nodeCount points and (nodeCount-1) segments.
+        for (int bone = 1; bone < n - 1; bone++)
+        {
+            int baseIdx = bone;
+            int tipIdx = bone + 1;
+
+            // getRigid: base = parent tip, rigidRot = parent.rot + chain_rest (0)
+            Vector3 rigidBase = _pos[baseIdx];
+            Vector3 rigidTip = rigidBase + parentDir * segLen;
+
+            // Spring-damper on tip (HTML simTips / simVels)
+            Vector3 tip = _pos[tipIdx];
+            Vector3 vel = _vel[tipIdx];
+
+            vel += (rigidTip - tip) * stiffness;
+            vel *= damping;
+            tip += vel;
+
+            // Length constraint: bone rotates, never stretches
+            Vector3 delta = tip - rigidBase;
+            float dist = delta.magnitude;
+            if (dist > 0.001f)
+                tip = rigidBase + delta * (segLen / dist);
+            else
+                tip = rigidTip;
+
+            _pos[baseIdx] = rigidBase;
+            _pos[tipIdx] = tip;
+            _vel[tipIdx] = vel;
+            _prev[tipIdx] = tip;
+
+            // aim parent for next bone (tsQuatFromTo / atan2)
+            Vector3 aim = tip - rigidBase;
+            float aimLen = aim.magnitude;
+            parentDir = aimLen > 1e-8f ? aim / aimLen : parentDir;
+        }
+
+        // Ensure root slot stays pinned after child writes (baseIdx never 0 here).
+        _pos[0] = anchor;
+        _prev[0] = anchor;
+        _vel[0] = Vector3.zero;
     }
 
     /// <summary>

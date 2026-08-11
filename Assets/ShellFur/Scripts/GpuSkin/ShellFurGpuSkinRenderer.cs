@@ -132,7 +132,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand)")]
-    [Tooltip("Spring / Verlet / Grass. Shell = pure extrude + chain δ (no GravityBend while chain on).")]
+    [Tooltip("Spring / Verlet / Grass / Bone. Shell = pure extrude + chain δ (no GravityBend while chain on).")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     public enum DynamicsResolution
