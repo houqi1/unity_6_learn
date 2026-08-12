@@ -1,0 +1,238 @@
+#ifndef WATER_HLSL
+#define WATER_HLSL
+
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Packing.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareOpaqueTexture.hlsl"
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+
+// SSPR 输出（由 ScreenSpacePlanarReflectionFeature 写入）
+// 采样器名必须与纹理名匹配（DX11 要求），不能复用 sampler_CameraOpaqueTexture
+TEXTURE2D(_SSPR_ColorRT);
+SAMPLER(sampler_SSPR_ColorRT);
+float _SSPR_Enabled;
+
+// -----------------------------------------------------------------------------
+TEXTURE2D(_NormalMap);
+SAMPLER(sampler_NormalMap);
+
+CBUFFER_START(UnityPerMaterial)
+    half4  _ShallowColor;
+    half4  _DeepColor;
+    half   _ColorDepth;
+    half   _Alpha;
+    half   _NormalStrength;
+    float4 _NormalTiling;
+    float4 _NormalSpeedA;
+    float4 _NormalSpeedB;
+    half   _ReflectionStrength;
+    half   _ReflectionFresnelPower;
+    half   _ReflectionFresnelBias;
+    half   _ReflectionDistortion;
+    half   _ReflectionScreenEdgeFade;
+    half   _RefractionStrength;
+    half   _RefractionDistortion;
+    half4  _SpecularColor;
+    half   _Smoothness;
+    half   _SpecularIntensity;
+    half   _EdgeFade;
+    half4  _FoamColor;
+    half   _FoamWidth;
+    half   _FoamIntensity;
+CBUFFER_END
+
+// -----------------------------------------------------------------------------
+half3 DecodeDualChannelNormal(half4 packedNormal, half scale)
+{
+#if defined(_NORMALPACK_AG)
+    return UnpackNormalAG(packedNormal, scale);
+#elif defined(_NORMALPACK_RGB)
+    return UnpackNormalRGB(packedNormal, scale);
+#else
+    half3 n;
+    n.xy = packedNormal.rg * 2.0h - 1.0h;
+    n.z = max(1.0e-16h, sqrt(1.0h - saturate(dot(n.xy, n.xy))));
+    n.xy *= scale;
+    return n;
+#endif
+}
+
+half3 SampleWaterNormalTS(float2 uv)
+{
+    float2 uvA = uv * _NormalTiling.xy + _Time.y * _NormalSpeedA.xy;
+    float2 uvB = uv * _NormalTiling.zw + _Time.y * _NormalSpeedB.xy;
+    half3 nA = DecodeDualChannelNormal(SAMPLE_TEXTURE2D(_NormalMap, sampler_NormalMap, uvA), _NormalStrength);
+    half3 nB = DecodeDualChannelNormal(SAMPLE_TEXTURE2D(_NormalMap, sampler_NormalMap, uvB), _NormalStrength);
+    return normalize(half3(nA.xy + nB.xy, nA.z * nB.z));
+}
+
+float2 ProjectiveToUV(float4 projective)
+{
+    return projective.xy / max(projective.w, 1e-5);
+}
+
+// =============================================================================
+// SSPR 反射采样
+//
+// SSPR 已经在 Compute 里做完「场景点镜像 → 重投影」：
+//   ColorRT[mirroredScreenUV] = Opaque[sourceUV]
+//
+// 水面片元只做：
+//   uv = screenUV + bump 扰动
+//   color = Sample(_SSPR_ColorRT, uv)
+//
+// 这才是 SSPR 的正确用法；不要在水面里自己算 reflect 投影。
+// =============================================================================
+half4 SampleSSPR(float2 screenUV, half3 bumpTS, float4 screenPos)
+{
+    // 扰动加在投影坐标上再除 w（FX/Water 风格，透视正确）
+    float2 offset = bumpTS.xy * _ReflectionDistortion / max(screenPos.w, 1e-5);
+    float2 uv = saturate(screenUV + offset);
+
+    half4 sspr = SAMPLE_TEXTURE2D(_SSPR_ColorRT, sampler_SSPR_ColorRT, uv);
+
+    // 边缘淡出
+    float2 edge = abs(uv * 2.0 - 1.0);
+    float border = max(edge.x, edge.y);
+    half edgeFade = 1.0h - smoothstep(1.0h - _ReflectionScreenEdgeFade, 1.0h, border);
+    sspr.a *= edgeFade;
+
+    return sspr;
+}
+
+// 折射：当前 screenUV + bump
+float2 BuildRefractionUV(float4 screenPos, half3 bumpTS)
+{
+    float4 refr = screenPos;
+    refr.xy += bumpTS.xy * _RefractionDistortion;
+    return ProjectiveToUV(refr);
+}
+
+// -----------------------------------------------------------------------------
+struct WaterAttributes
+{
+    float4 positionOS : POSITION;
+    float3 normalOS   : NORMAL;
+    float4 tangentOS  : TANGENT;
+    float2 uv         : TEXCOORD0;
+    UNITY_VERTEX_INPUT_INSTANCE_ID
+};
+
+struct WaterVaryings
+{
+    float4 positionCS  : SV_POSITION;
+    float2 uv          : TEXCOORD0;
+    float3 positionWS  : TEXCOORD1;
+    float3 normalWS    : TEXCOORD2;
+    float4 tangentWS   : TEXCOORD3;
+    float  fogFactor   : TEXCOORD4;
+    float4 screenPos   : TEXCOORD5;
+    #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)
+    float4 shadowCoord : TEXCOORD6;
+    #endif
+    UNITY_VERTEX_INPUT_INSTANCE_ID
+    UNITY_VERTEX_OUTPUT_STEREO
+};
+
+#if defined(WATER_FORWARD_PASS)
+
+WaterVaryings WaterVert(WaterAttributes input)
+{
+    WaterVaryings o = (WaterVaryings)0;
+    UNITY_SETUP_INSTANCE_ID(input);
+    UNITY_TRANSFER_INSTANCE_ID(input, o);
+    UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
+
+    VertexPositionInputs posInputs = GetVertexPositionInputs(input.positionOS.xyz);
+    VertexNormalInputs   nrmInputs = GetVertexNormalInputs(input.normalOS, input.tangentOS);
+
+    o.positionCS = posInputs.positionCS;
+    o.positionWS = posInputs.positionWS;
+    o.uv         = input.uv;
+    o.normalWS   = nrmInputs.normalWS;
+    real sign    = input.tangentOS.w * GetOddNegativeScale();
+    o.tangentWS  = float4(nrmInputs.tangentWS.xyz, sign);
+    o.fogFactor  = ComputeFogFactor(posInputs.positionCS.z);
+    o.screenPos  = ComputeScreenPos(posInputs.positionCS);
+
+    #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)
+    o.shadowCoord = GetShadowCoord(posInputs);
+    #endif
+    return o;
+}
+
+half4 WaterFrag(WaterVaryings i) : SV_Target
+{
+    UNITY_SETUP_INSTANCE_ID(i);
+    UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+
+    float3 positionWS = i.positionWS;
+    half3  viewDirWS  = GetWorldSpaceNormalizeViewDir(positionWS);
+    float4 screenPos  = i.screenPos;
+    float2 screenUV   = ProjectiveToUV(screenPos);
+
+    half3 normalTS = SampleWaterNormalTS(i.uv);
+    half3 nWS = normalize(i.normalWS);
+    half3 tWS = normalize(i.tangentWS.xyz);
+    half3 bWS = cross(nWS, tWS) * i.tangentWS.w;
+    half3 normalWS = normalize(TransformTangentToWorld(normalTS, half3x3(tWS, bWS, nWS)));
+
+    // 水深
+    float sceneEyeDepth = LinearEyeDepth(SampleSceneDepth(screenUV), _ZBufferParams);
+    float surfaceEyeDepth = LinearEyeDepth(i.positionCS.z, _ZBufferParams);
+    float waterDepth = max(sceneEyeDepth - surfaceEyeDepth, 0.0);
+
+    half depthFade = saturate(waterDepth / max(_ColorDepth, 1e-3h));
+    half edgeFade  = saturate(waterDepth / max(_EdgeFade, 1e-3h));
+    half foamMask  = saturate((1.0h - saturate(waterDepth / max(_FoamWidth, 1e-3h))) * _FoamIntensity);
+    half3 waterColor = lerp(_ShallowColor.rgb, _DeepColor.rgb, depthFade);
+
+    // 折射
+    float2 refractUV = saturate(BuildRefractionUV(screenPos, normalTS));
+    half3 sceneRefract = SampleSceneColor(refractUV);
+    half3 refractColor = lerp(waterColor, sceneRefract * waterColor, _RefractionStrength);
+
+    // ========== SSPR 反射 ==========
+    half4 sspr = 0;
+    if (_SSPR_Enabled > 0.5)
+        sspr = SampleSSPR(screenUV, normalTS, screenPos);
+
+    // 无 SSPR 数据时回退水色（不要再用错误的 SceneColor UV 映射）
+    half3 sceneReflect = lerp(waterColor, sspr.rgb, sspr.a);
+
+#if defined(_DEBUG_REFLECTION)
+    return half4(sceneReflect, 1.0h);
+#endif
+
+    half NoV = saturate(dot(normalWS, viewDirWS));
+    half fresnel = _ReflectionFresnelBias + (1.0h - _ReflectionFresnelBias)
+                 * pow(1.0h - NoV, _ReflectionFresnelPower);
+    fresnel = saturate(fresnel);
+
+    half3 body = lerp(refractColor, sceneReflect, fresnel * _ReflectionStrength * max(sspr.a, 0.15h));
+    body = lerp(body, _FoamColor.rgb, foamMask * edgeFade);
+
+    #if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)
+    float4 shadowCoord = i.shadowCoord;
+    #elif defined(MAIN_LIGHT_CALCULATE_SHADOWS)
+    float4 shadowCoord = TransformWorldToShadowCoord(positionWS);
+    #else
+    float4 shadowCoord = float4(0, 0, 0, 0);
+    #endif
+
+    Light mainLight = GetMainLight(shadowCoord);
+    half atten = mainLight.distanceAttenuation * mainLight.shadowAttenuation;
+    half3 halfDir = normalize(mainLight.direction + viewDirWS);
+    half NdotH = saturate(dot(normalWS, halfDir));
+    half specPow = exp2(10.0h * _Smoothness + 1.0h);
+    half3 specular = mainLight.color * atten * pow(NdotH, specPow)
+                   * _SpecularColor.rgb * _SpecularIntensity * fresnel;
+
+    half3 color = MixFog(body + specular, i.fogFactor);
+    half alpha = saturate(lerp(_ShallowColor.a, _DeepColor.a, depthFade) * _Alpha * edgeFade);
+    return half4(color, alpha);
+}
+
+#endif
+#endif

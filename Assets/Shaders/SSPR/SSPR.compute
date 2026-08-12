@@ -1,0 +1,183 @@
+// =============================================================================
+// Screen Space Planar Reflection (SSPR)
+// 参考 Ghost Recon Wildlands / ColinLeung MobileSSPR
+//
+// 流程：
+//   Clear → RenderHash → Resolve → FillHoles
+//
+// RenderHash（对每个「源」屏幕像素）：
+//   1. 深度还原 WorldPos
+//   2. 若 y <= planeY → 丢弃（水面下不能当倒影源）
+//   3. Mirror: y' = 2*planeY - y
+//   4. 镜像点再投影 → reflUV
+//   5. HashRT[reflUV] = pack(srcY, srcX, alpha)   // InterlockedMin 竞争
+//
+// Resolve（对每个「倒影」屏幕像素）：
+//   解包源坐标 → 采 _CameraOpaqueTexture → 写入 ColorRT
+//
+// 水面 Shader：
+//   Sample(_SSPR_ColorRT, screenUV + bump)   // 不再自己乱映射 UV
+// =============================================================================
+
+#pragma kernel Clear
+#pragma kernel RenderHash
+#pragma kernel Resolve
+#pragma kernel FillHoles
+
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+#define NUMTHREAD 8
+#define MAX_UINT  0xFFFFFFFFu
+
+float2   _RTSize;
+float    _HorizontalPlaneHeightWS;
+float4x4 _InverseVP;
+float4x4 _VPMatrix;
+float3   _CameraDirection;
+float    _ScreenLRStretchIntensity;
+float    _ScreenLRStretchThreshold;
+
+Texture2D<float>  _CameraDepthTexture;
+Texture2D<half4>  _CameraOpaqueTexture;
+// sampler_PointClamp / sampler_LinearClamp 由 Core.hlsl → GlobalSamplers.hlsl 提供，勿重复声明
+
+RWTexture2D<uint>  _HashRT;
+RWTexture2D<half4> _ColorRT;
+
+// -----------------------------------------------------------------------------
+float3 ScreenIDToWorldPos(uint2 id)
+{
+    float2 uv = (float2(id) + 0.5) / _RTSize;
+    float rawDepth = _CameraDepthTexture.SampleLevel(sampler_PointClamp, uv, 0);
+
+    float4 posCS = float4(uv * 2.0 - 1.0, rawDepth, 1.0);
+#if UNITY_UV_STARTS_AT_TOP
+    posCS.y = -posCS.y;
+#endif
+    float4 h = mul(_InverseVP, posCS);
+    return h.xyz / max(h.w, 1e-6);
+}
+
+float3 MirrorHorizontal(float3 p)
+{
+    p.y = _HorizontalPlaneHeightWS * 2.0 - p.y;
+    return p;
+}
+
+float2 WorldToScreenUV(float3 posWS)
+{
+    float4 clip = mul(_VPMatrix, float4(posWS, 1.0));
+    float2 ndc = clip.xy / max(clip.w, 1e-6);
+    float2 uv = ndc * 0.5 + 0.5;
+
+    // 左右边缘拉伸补洞（Ghost Recon）
+    float hStretch = abs(posWS.y - _HorizontalPlaneHeightWS);
+    float aStretch = saturate(-_CameraDirection.y);
+    float sStretch = saturate(abs(uv.x * 2.0 - 1.0) - _ScreenLRStretchThreshold);
+    float x = uv.x * 2.0 - 1.0;
+    x *= 1.0 + hStretch * aStretch * sStretch * _ScreenLRStretchIntensity;
+    uv.x = saturate(x * 0.5 + 0.5);
+
+#if UNITY_UV_STARTS_AT_TOP
+    uv.y = 1.0 - uv.y;
+#endif
+    return uv;
+}
+
+// pack: 12bit srcY | 12bit srcX | 8bit alpha
+// InterlockedMin → 更小的 srcY 优先（更靠屏幕下方/更近水面的候选策略）
+uint PackHash(uint2 srcID, half alpha)
+{
+    uint a = (uint)(saturate(alpha) * 255.0);
+    return ((srcID.y & 0xFFFu) << 20) | ((srcID.x & 0xFFFu) << 8) | a;
+}
+
+void UnpackHash(uint h, out uint2 srcID, out half alpha)
+{
+    srcID.y = (h >> 20) & 0xFFFu;
+    srcID.x = (h >> 8) & 0xFFFu;
+    alpha = (h & 0xFFu) / 255.0h;
+}
+
+// -----------------------------------------------------------------------------
+[numthreads(NUMTHREAD, NUMTHREAD, 1)]
+void Clear(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= (uint2)_RTSize)) return;
+    _HashRT[id.xy] = MAX_UINT;
+    _ColorRT[id.xy] = half4(0, 0, 0, 0);
+}
+
+// -----------------------------------------------------------------------------
+[numthreads(NUMTHREAD, NUMTHREAD, 1)]
+void RenderHash(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= (uint2)_RTSize)) return;
+
+    float3 posWS = ScreenIDToWorldPos(id.xy);
+    if (posWS.y <= _HorizontalPlaneHeightWS + 1e-3)
+        return;
+
+    float3 mirrored = MirrorHorizontal(posWS);
+    float2 reflUV = WorldToScreenUV(mirrored);
+
+    if (any(abs(reflUV - 0.5) >= 0.499))
+        return;
+
+    uint2 reflID = uint2(reflUV * _RTSize);
+    if (any(reflID >= (uint2)_RTSize))
+        return;
+
+    float2 srcUV = (float2(id.xy) + 0.5) / _RTSize;
+    half alpha = 1.0h;
+    alpha *= smoothstep(1.0h, 0.90h, srcUV.y);
+    alpha *= smoothstep(1.0h, 0.88h, abs(srcUV.x * 2.0h - 1.0h));
+
+    uint hash = PackHash(id.xy, alpha);
+    InterlockedMin(_HashRT[reflID], hash);
+}
+
+// -----------------------------------------------------------------------------
+[numthreads(NUMTHREAD, NUMTHREAD, 1)]
+void Resolve(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= (uint2)_RTSize)) return;
+
+    uint packed = _HashRT[id.xy];
+    if (packed == MAX_UINT)
+    {
+        _ColorRT[id.xy] = half4(0, 0, 0, 0);
+        return;
+    }
+
+    uint2 srcID;
+    half alpha;
+    UnpackHash(packed, srcID, alpha);
+
+    float2 srcUV = (float2(srcID) + 0.5) / _RTSize;
+    half3 col = _CameraOpaqueTexture.SampleLevel(sampler_LinearClamp, srcUV, 0).rgb;
+    _ColorRT[id.xy] = half4(col, alpha);
+}
+
+// -----------------------------------------------------------------------------
+[numthreads(NUMTHREAD, NUMTHREAD, 1)]
+void FillHoles(uint3 id : SV_DispatchThreadID)
+{
+    uint2 b = id.xy * 2;
+    if (any(b + 1 >= (uint2)_RTSize)) return;
+
+    half4 c0 = _ColorRT[b + uint2(0, 0)];
+    half4 c1 = _ColorRT[b + uint2(1, 0)];
+    half4 c2 = _ColorRT[b + uint2(0, 1)];
+    half4 c3 = _ColorRT[b + uint2(1, 1)];
+
+    half4 best = c0;
+    best = c1.a > best.a + 0.35h ? c1 : best;
+    best = c2.a > best.a + 0.35h ? c2 : best;
+    best = c3.a > best.a + 0.35h ? c3 : best;
+
+    if (best.a > c0.a + 0.35h) _ColorRT[b + uint2(0, 0)] = best;
+    if (best.a > c1.a + 0.35h) _ColorRT[b + uint2(1, 0)] = best;
+    if (best.a > c2.a + 0.35h) _ColorRT[b + uint2(0, 1)] = best;
+    if (best.a > c3.a + 0.35h) _ColorRT[b + uint2(1, 1)] = best;
+}

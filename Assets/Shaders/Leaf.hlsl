@@ -23,6 +23,9 @@ CBUFFER_START(UnityPerMaterial)
     half   _OcclusionStrength;
     half   _Smoothness;
     half   _Metallic;
+    half   _DiffuseWrap;
+    half4  _DiffuseColor;
+    half4  _EmissionColor;
     half4  _TranslucencyColor;
     half   _TranslucencyPower;
     half   _TranslucencyStrength;
@@ -146,6 +149,15 @@ half3 Translucency(half3 lightDirWS, half3 viewDirWS, half3 normalWS, half3 ligh
     return lightColor * albedo * _TranslucencyColor.rgb * (vDotL * _TranslucencyStrength);
 }
 
+// Wrap / Warp diffuse：将 NdotL 从 [-wrap, 1] 映射到 [0, 1]
+// wrap = 0 → 标准 Lambert；wrap → 1 → 半兰伯特风格，暗部更亮更软
+half DiffuseWrapNdotL(half3 normalWS, half3 lightDirWS, half wrap)
+{
+    half NdotL = dot(normalWS, lightDirWS);
+    half w = saturate(wrap);
+    return saturate((NdotL + w) / (1.0h + w));
+}
+
 // =============================================================================
 // Forward Lit
 // =============================================================================
@@ -223,11 +235,13 @@ half4 LeafFrag(LeafVaryings i, half face : VFACE) : SV_Target
 
     Light mainLight = GetMainLight(shadowCoord);
     half3 lightDir  = mainLight.direction;
-    half3 lightCol  = mainLight.color * (mainLight.distanceAttenuation * mainLight.shadowAttenuation);
+    half  lightAtten = mainLight.distanceAttenuation * mainLight.shadowAttenuation;
+    // 高光 / 透光仍用真实灯光色；diffuse 改用自定义色
+    half3 lightCol  = mainLight.color * lightAtten;
 
-    // --- BRDF 近似：Lambert diffuse + GGX-ish Blinn ---
-    half NdotL = saturate(dot(normalWS, lightDir));
-    half3 diffuse = albedo * (1.0h - metallic) * lightCol * NdotL;
+    // --- Wrap Lambert diffuse：不乘灯光颜色，改乘 _DiffuseColor ---
+    half NdotL = DiffuseWrapNdotL(normalWS, lightDir, _DiffuseWrap);
+    half3 diffuse = albedo * (1.0h - metallic) * _DiffuseColor.rgb * NdotL * lightAtten;
 
     half3 halfDir = normalize(lightDir + viewDirWS);
     half  NdotH   = saturate(dot(normalWS, halfDir));
@@ -238,10 +252,13 @@ half4 LeafFrag(LeafVaryings i, half face : VFACE) : SV_Target
     half3 bakedGI = SAMPLE_GI(i.staticLightmapUV, i.vertexSH, normalWS);
     half3 ambient = bakedGI * albedo * occlusion;
 
+    // --- Emission：BaseColor(albedo) * HDR 颜色 ---
+    half3 emission = albedo * _EmissionColor.rgb;
+
     // --- Translucency（叶片透光）---
     half3 translucency = Translucency(lightDir, viewDirWS, normalWS, lightCol, albedo) * occlusion;
 
-    half3 color = ambient + diffuse + specular + translucency;
+    half3 color = ambient + diffuse + specular + translucency + emission;
 
     // --- Additional lights ---
     #ifdef _ADDITIONAL_LIGHTS
@@ -256,9 +273,10 @@ half4 LeafFrag(LeafVaryings i, half face : VFACE) : SV_Target
         #endif
         LIGHT_LOOP_BEGIN(lightCount)
             Light light = GetAdditionalLight(lightIndex, positionWS);
-            half3 addCol = light.color * (light.distanceAttenuation * light.shadowAttenuation);
-            half  addNdotL = saturate(dot(normalWS, light.direction));
-            color += albedo * (1.0h - metallic) * addCol * addNdotL;
+            half  addAtten = light.distanceAttenuation * light.shadowAttenuation;
+            half3 addCol = light.color * addAtten;
+            half  addNdotL = DiffuseWrapNdotL(normalWS, light.direction, _DiffuseWrap);
+            color += albedo * (1.0h - metallic) * _DiffuseColor.rgb * addNdotL * addAtten;
             color += Translucency(light.direction, viewDirWS, normalWS, addCol, albedo) * occlusion;
         LIGHT_LOOP_END
     }

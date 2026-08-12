@@ -22,6 +22,13 @@ Shader "Custom/Leaf"
         // Mask G 作为粗糙度时，Smoothness = (1 - Roughness) * _Smoothness
         [Toggle(_MASKMAP)] _UseMaskMap ("Use Mask Map", Float) = 1
 
+        [Header(Lighting)]
+        // Wrap：0 = 标准 Lambert，越大暗部越被「包」进受光区
+        _DiffuseWrap ("Diffuse Wrap", Range(0, 1)) = 0.35
+        // Diffuse 不乘灯光颜色，改乘此自定义色（仍受阴影/衰减影响）
+        _DiffuseColor ("Diffuse Color", Color) = (1, 1, 1, 1)
+        [HDR] _EmissionColor ("Emission Color (HDR)", Color) = (0, 0, 0, 1)
+
         [Header(Translucency)]
         _TranslucencyColor ("Translucency Color", Color) = (0.35, 0.55, 0.15, 1)
         _TranslucencyPower ("Translucency Power", Range(0.5, 8)) = 2
