@@ -12,7 +12,6 @@ Material:
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords:
-  - _DEBUG_REFLECTION
   - _NORMALPACK_RGB
   m_InvalidKeywords: []
   m_LightmapFlags: 4
@@ -35,7 +34,7 @@ Material:
     - _Alpha: 0.85
     - _ColorDepth: 4
     - _Cull: 2
-    - _DebugReflection: 1
+    - _DebugReflection: 0
     - _EdgeFade: 0.8
     - _FoamIntensity: 0.6
     - _FoamWidth: 0.35
@@ -45,9 +44,9 @@ Material:
     - _ReflectionFresnelBias: 0.05
     - _ReflectionFresnelPower: 3
     - _ReflectionScreenEdgeFade: 0.12
-    - _ReflectionStrength: 0.85
+    - _ReflectionStrength: 1
     - _RefractionDistortion: 0.3
-    - _RefractionStrength: 0.55
+    - _RefractionStrength: 0.461
     - _Smoothness: 0.85
     - _SpecularIntensity: 1.2
     m_Colors:

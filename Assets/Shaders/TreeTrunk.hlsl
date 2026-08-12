@@ -11,6 +11,7 @@
 TEXTURE2D(_BaseMap);            SAMPLER(sampler_BaseMap);
 TEXTURE2D(_BumpMap);            SAMPLER(sampler_BumpMap);
 TEXTURE2D(_MaskMap);            SAMPLER(sampler_MaskMap);
+TEXTURE2D(_EmissionMap);        SAMPLER(sampler_EmissionMap);
 TEXTURE2D(_DetailAlbedoMap);    SAMPLER(sampler_DetailAlbedoMap);
 TEXTURE2D(_DetailNormalMap);    SAMPLER(sampler_DetailNormalMap);
 
@@ -18,6 +19,7 @@ CBUFFER_START(UnityPerMaterial)
     float4 _BaseMap_ST;
     float4 _BumpMap_ST;
     float4 _MaskMap_ST;
+    float4 _EmissionMap_ST;
     float4 _DetailAlbedoMap_ST;
     float4 _DetailNormalMap_ST;
     half4  _BaseColor;
@@ -28,6 +30,7 @@ CBUFFER_START(UnityPerMaterial)
     half   _DiffuseWrap;
     half4  _DiffuseColor;
     half4  _EmissionColor;
+    half4  _EmissionMapColor;
     half   _DetailNormalScale;
     half   _DetailAlbedoScale;
 CBUFFER_END
@@ -203,8 +206,15 @@ half4 TrunkFrag(TrunkVaryings i) : SV_Target
     half3 bakedGI = SAMPLE_GI(i.staticLightmapUV, i.vertexSH, normalWS);
     half3 ambient = bakedGI * albedo * occlusion;
 
-    // Emission = albedo * HDR
+    // 基础自发光（始终）：albedo * Emission Color
     half3 emission = albedo * _EmissionColor.rgb;
+
+    // 额外自发光层（可选）：Emission Map * Emission Map Color，与上面独立叠加
+#if defined(_EMISSIONMAP)
+    float2 emissionUV = TRANSFORM_TEX(i.uv, _EmissionMap);
+    half3 emissionMapSample = SAMPLE_TEXTURE2D(_EmissionMap, sampler_EmissionMap, emissionUV).rgb;
+    emission += emissionMapSample * _EmissionMapColor.rgb;
+#endif
 
     half3 color = ambient + diffuse + specular + emission;
 

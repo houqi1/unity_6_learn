@@ -6,9 +6,9 @@ using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
 
 /// <summary>
-/// Screen Space Planar Reflection (SSPR)
-/// Compute：场景像素镜像重投影 → _SSPR_ColorRT
-/// 水面：Sample(_SSPR_ColorRT, screenUV + bump)
+/// URP 17 Render Graph 版 SSPR（Screen Space Planar Reflection）。
+/// 官方模式：ScriptableRenderPass.RecordRenderGraph + AddComputePass + ComputeGraphContext。
+/// 不启用 Compatibility Mode，不依赖 RenderingData.commandBuffer（internal）。
 /// </summary>
 [DisallowMultipleRendererFeature("Screen Space Planar Reflection")]
 public class ScreenSpacePlanarReflectionFeature : ScriptableRendererFeature
@@ -16,10 +16,11 @@ public class ScreenSpacePlanarReflectionFeature : ScriptableRendererFeature
     [Serializable]
     public class Settings
     {
-        [Tooltip("水平反射平面世界 Y（与水面高度一致）")]
+        [Tooltip("水平反射平面世界 Y，必须与水面高度一致")]
         public float planeY = 0f;
 
         [Range(0.25f, 1f)]
+        [Tooltip("SSPR 分辨率相对屏幕")]
         public float resolutionScale = 0.5f;
 
         [Range(0f, 2f)]
@@ -38,15 +39,25 @@ public class ScreenSpacePlanarReflectionFeature : ScriptableRendererFeature
 
     public override void Create()
     {
-        m_Pass ??= new SSPRPass();
-        m_Pass.Setup(settings, ssprCompute);
-        m_Pass.renderPassEvent = settings.injectionPoint;
+        m_Pass = new SSPRPass();
+        m_Pass.renderPassEvent = settings != null
+            ? settings.injectionPoint
+            : RenderPassEvent.BeforeRenderingTransparents;
     }
 
     public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
     {
-        if (ssprCompute == null || !SystemInfo.supportsComputeShaders)
+        if (ssprCompute == null)
+        {
+            Debug.LogWarning("[SSPR] ComputeShader 未赋值，跳过。");
             return;
+        }
+
+        if (!SystemInfo.supportsComputeShaders)
+        {
+            Debug.LogWarning("[SSPR] 设备不支持 ComputeShader，跳过。");
+            return;
+        }
 
         var camType = renderingData.cameraData.cameraType;
         if (camType == CameraType.Preview || camType == CameraType.Reflection)
@@ -57,12 +68,13 @@ public class ScreenSpacePlanarReflectionFeature : ScriptableRendererFeature
 
         m_Pass.Setup(settings, ssprCompute);
         m_Pass.renderPassEvent = settings.injectionPoint;
+        // Depth + Color 输入会让 URP 准备 _CameraDepthTexture / Opaque
+        m_Pass.ConfigureInput(ScriptableRenderPassInput.Depth | ScriptableRenderPassInput.Color);
         renderer.EnqueuePass(m_Pass);
     }
 
     protected override void Dispose(bool disposing)
     {
-        m_Pass?.Dispose();
         m_Pass = null;
     }
 
@@ -83,24 +95,21 @@ public class ScreenSpacePlanarReflectionFeature : ScriptableRendererFeature
         static readonly int ID_SSPRColor = Shader.PropertyToID("_SSPR_ColorRT");
         static readonly int ID_SSPROn = Shader.PropertyToID("_SSPR_Enabled");
 
-        Settings m_Settings = new Settings();
+        Settings m_Settings;
         ComputeShader m_CS;
         int m_KClear, m_KHash, m_KResolve, m_KFill;
-
-        RTHandle m_ColorRT;
-        RTHandle m_HashRT;
 
         public SSPRPass()
         {
             profilingSampler = new ProfilingSampler("SSPR");
-            ConfigureInput(ScriptableRenderPassInput.Depth | ScriptableRenderPassInput.Color);
         }
 
         public void Setup(Settings settings, ComputeShader cs)
         {
             m_Settings = settings ?? new Settings();
             m_CS = cs;
-            if (m_CS == null) return;
+            if (m_CS == null)
+                return;
 
             m_KClear = m_CS.FindKernel("Clear");
             m_KHash = m_CS.FindKernel("RenderHash");
@@ -108,70 +117,144 @@ public class ScreenSpacePlanarReflectionFeature : ScriptableRendererFeature
             m_KFill = m_CS.FindKernel("FillHoles");
         }
 
-        public void Dispose()
-        {
-            m_ColorRT?.Release();
-            m_HashRT?.Release();
-            m_ColorRT = null;
-            m_HashRT = null;
-        }
-
-        void EnsureRTs(int screenW, int screenH)
-        {
-            float scale = Mathf.Clamp(m_Settings.resolutionScale, 0.25f, 1f);
-            int w = Mathf.Max(8, Mathf.RoundToInt(screenW * scale));
-            int h = Mathf.Max(8, Mathf.RoundToInt(screenH * scale));
-            w = (w + 7) / 8 * 8;
-            h = (h + 7) / 8 * 8;
-
-            var colorDesc = new RenderTextureDescriptor(w, h)
-            {
-                graphicsFormat = GraphicsFormat.R8G8B8A8_UNorm,
-                depthBufferBits = 0,
-                msaaSamples = 1,
-                enableRandomWrite = true,
-                sRGB = false
-            };
-            var hashDesc = colorDesc;
-            hashDesc.graphicsFormat = GraphicsFormat.R32_UInt;
-
-            RenderingUtils.ReAllocateHandleIfNeeded(ref m_ColorRT, colorDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_SSPR_ColorRT");
-            RenderingUtils.ReAllocateHandleIfNeeded(ref m_HashRT, hashDesc, FilterMode.Point, TextureWrapMode.Clamp, name: "_SSPR_HashRT");
-        }
-
+        // ---------------------------------------------------------------------
+        // Pass data：只放能跨 Record → Execute 传递的数据
+        // ---------------------------------------------------------------------
         class PassData
         {
             public ComputeShader cs;
             public int kClear, kHash, kResolve, kFill;
-            public RTHandle colorRT;
-            public RTHandle hashRT;
-            public TextureHandle depthHandle;
-            public TextureHandle opaqueHandle;
-            public Vector2Int rtSize;
+            public int groupsX, groupsY;
+            public int fillX, fillY;
+
+            public TextureHandle depthTex;
+            public TextureHandle opaqueTex;
+            public TextureHandle hashRT;
+            public TextureHandle colorRT;
+
+            public Vector4 rtSize;
             public Matrix4x4 vp;
             public Matrix4x4 invVP;
             public Vector3 camForward;
             public float planeY;
             public float stretchI;
             public float stretchT;
-            public bool hasDepthOpaque;
+            public bool resourcesValid;
         }
 
-        void DispatchSSPR(CommandBuffer cmd, PassData data)
+        /// <summary>
+        /// URP 17 主路径：仅通过 Render Graph 调度。
+        /// </summary>
+        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
         {
-            if (data.cs == null || data.colorRT == null || data.hashRT == null)
+            if (m_CS == null)
+                return;
+
+            UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
+            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+
+            // ---- 分辨率 ----
+            var camDesc = cameraData.cameraTargetDescriptor;
+            float scale = Mathf.Clamp(m_Settings.resolutionScale, 0.25f, 1f);
+            int w = Mathf.Max(8, Mathf.RoundToInt(camDesc.width * scale));
+            int h = Mathf.Max(8, Mathf.RoundToInt(camDesc.height * scale));
+            w = (w + 7) / 8 * 8;
+            h = (h + 7) / 8 * 8;
+
+            // ---- 创建 UAV 纹理（RenderGraph 管理生命周期）----
+            var colorDesc = new TextureDesc(w, h)
+            {
+                name = "_SSPR_ColorRT",
+                format = GraphicsFormat.R8G8B8A8_UNorm,
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+                enableRandomWrite = true,
+                clearBuffer = true,
+                clearColor = Color.clear,
+                msaaSamples = MSAASamples.None,
+                depthBufferBits = DepthBits.None
+            };
+            var hashDesc = colorDesc;
+            hashDesc.name = "_SSPR_HashRT";
+            hashDesc.format = GraphicsFormat.R32_UInt;
+            hashDesc.filterMode = FilterMode.Point;
+
+            TextureHandle colorRT = renderGraph.CreateTexture(colorDesc);
+            TextureHandle hashRT = renderGraph.CreateTexture(hashDesc);
+
+            // 深度 / 不透明（URP 资源）
+            TextureHandle depthTex = resourceData.cameraDepthTexture;
+            TextureHandle opaqueTex = resourceData.cameraOpaqueTexture;
+            bool resourcesValid = depthTex.IsValid() && opaqueTex.IsValid();
+
+            var cam = cameraData.camera;
+            Matrix4x4 view = cam.worldToCameraMatrix;
+            // RenderGraph 路径下 RT 为 texture，renderIntoTexture=true
+            Matrix4x4 proj = GL.GetGPUProjectionMatrix(cam.projectionMatrix, true);
+            Matrix4x4 vp = proj * view;
+
+            // -----------------------------------------------------------------
+            // 单一 Compute Pass：Clear → Hash → Resolve → FillHoles → SetGlobal
+            // 使用 TextureHandle 声明依赖；执行时用 ComputeGraphContext.cmd
+            // -----------------------------------------------------------------
+            using (var builder = renderGraph.AddComputePass<PassData>("SSPR.Compute", out var passData, profilingSampler))
+            {
+                passData.cs = m_CS;
+                passData.kClear = m_KClear;
+                passData.kHash = m_KHash;
+                passData.kResolve = m_KResolve;
+                passData.kFill = m_KFill;
+                passData.groupsX = w / 8;
+                passData.groupsY = h / 8;
+                passData.fillX = Mathf.Max(1, passData.groupsX / 2);
+                passData.fillY = Mathf.Max(1, passData.groupsY / 2);
+
+                passData.hashRT = hashRT;
+                passData.colorRT = colorRT;
+                passData.depthTex = depthTex;
+                passData.opaqueTex = opaqueTex;
+                passData.resourcesValid = resourcesValid;
+
+                passData.rtSize = new Vector4(w, h, 0, 0);
+                passData.vp = vp;
+                passData.invVP = vp.inverse;
+                passData.camForward = cam.transform.forward;
+                passData.planeY = m_Settings.planeY;
+                passData.stretchI = m_Settings.stretchIntensity;
+                passData.stretchT = m_Settings.stretchThreshold;
+
+                // 依赖声明
+                if (depthTex.IsValid())
+                    builder.UseTexture(depthTex, AccessFlags.Read);
+                if (opaqueTex.IsValid())
+                    builder.UseTexture(opaqueTex, AccessFlags.Read);
+
+                builder.UseTexture(hashRT, AccessFlags.ReadWrite);
+                builder.UseTexture(colorRT, AccessFlags.ReadWrite);
+
+                // 全局纹理副作用：禁止裁掉本 Pass
+                builder.AllowGlobalStateModification(true);
+                builder.AllowPassCulling(false);
+
+                builder.SetRenderFunc(static (PassData data, ComputeGraphContext ctx) => ExecuteSSPR(data, ctx));
+            }
+        }
+
+        /// <summary>
+        /// static 执行函数：禁止捕获外部成员，只读 PassData。
+        /// </summary>
+        static void ExecuteSSPR(PassData data, ComputeGraphContext ctx)
+        {
+            var cmd = ctx.cmd;
+
+            if (!data.resourcesValid || data.cs == null)
             {
                 cmd.SetGlobalFloat(ID_SSPROn, 0f);
                 return;
             }
 
-            if (!data.hasDepthOpaque)
-            {
-                cmd.SetGlobalFloat(ID_SSPROn, 0f);
-                return;
-            }
-
-            cmd.SetComputeVectorParam(data.cs, ID_RTSize, new Vector4(data.rtSize.x, data.rtSize.y, 0, 0));
+            // 常量
+            cmd.SetComputeVectorParam(data.cs, ID_RTSize, data.rtSize);
             cmd.SetComputeFloatParam(data.cs, ID_PlaneY, data.planeY);
             cmd.SetComputeMatrixParam(data.cs, ID_InvVP, data.invVP);
             cmd.SetComputeMatrixParam(data.cs, ID_VP, data.vp);
@@ -179,153 +262,29 @@ public class ScreenSpacePlanarReflectionFeature : ScriptableRendererFeature
             cmd.SetComputeFloatParam(data.cs, ID_StretchI, data.stretchI);
             cmd.SetComputeFloatParam(data.cs, ID_StretchT, data.stretchT);
 
-            int gx = data.rtSize.x / 8;
-            int gy = data.rtSize.y / 8;
-
+            // --- Clear ---
             cmd.SetComputeTextureParam(data.cs, data.kClear, ID_HashRT, data.hashRT);
             cmd.SetComputeTextureParam(data.cs, data.kClear, ID_ColorRT, data.colorRT);
-            cmd.DispatchCompute(data.cs, data.kClear, gx, gy, 1);
+            cmd.DispatchCompute(data.cs, data.kClear, data.groupsX, data.groupsY, 1);
 
-            // 深度 / Opaque 用全局纹理（URP 已 set global）
-            var depthTex = Shader.GetGlobalTexture("_CameraDepthTexture");
-            var opaqueTex = Shader.GetGlobalTexture("_CameraOpaqueTexture");
-            if (depthTex == null || opaqueTex == null)
-            {
-                cmd.SetGlobalFloat(ID_SSPROn, 0f);
-                return;
-            }
-
+            // --- Hash：源像素镜像写入 ---
             cmd.SetComputeTextureParam(data.cs, data.kHash, ID_HashRT, data.hashRT);
-            cmd.SetComputeTextureParam(data.cs, data.kHash, ID_Depth, depthTex);
-            cmd.DispatchCompute(data.cs, data.kHash, gx, gy, 1);
+            cmd.SetComputeTextureParam(data.cs, data.kHash, ID_Depth, data.depthTex);
+            cmd.DispatchCompute(data.cs, data.kHash, data.groupsX, data.groupsY, 1);
 
+            // --- Resolve：采 Opaque 写入 ColorRT ---
             cmd.SetComputeTextureParam(data.cs, data.kResolve, ID_HashRT, data.hashRT);
             cmd.SetComputeTextureParam(data.cs, data.kResolve, ID_ColorRT, data.colorRT);
-            cmd.SetComputeTextureParam(data.cs, data.kResolve, ID_Opaque, opaqueTex);
-            cmd.DispatchCompute(data.cs, data.kResolve, gx, gy, 1);
+            cmd.SetComputeTextureParam(data.cs, data.kResolve, ID_Opaque, data.opaqueTex);
+            cmd.DispatchCompute(data.cs, data.kResolve, data.groupsX, data.groupsY, 1);
 
-            int fx = Mathf.Max(1, gx / 2);
-            int fy = Mathf.Max(1, gy / 2);
+            // --- FillHoles ---
             cmd.SetComputeTextureParam(data.cs, data.kFill, ID_ColorRT, data.colorRT);
-            cmd.DispatchCompute(data.cs, data.kFill, fx, fy, 1);
+            cmd.DispatchCompute(data.cs, data.kFill, data.fillX, data.fillY, 1);
 
+            // 供水面 Shader 采样
             cmd.SetGlobalTexture(ID_SSPRColor, data.colorRT);
             cmd.SetGlobalFloat(ID_SSPROn, 1f);
-        }
-
-        // ----- Compatibility Mode (Render Graph off) -----
-#pragma warning disable 618, 672
-        public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
-        {
-            var desc = renderingData.cameraData.cameraTargetDescriptor;
-            EnsureRTs(desc.width, desc.height);
-        }
-
-        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
-        {
-            if (m_CS == null)
-                return;
-
-            var cam = renderingData.cameraData.camera;
-            var desc = renderingData.cameraData.cameraTargetDescriptor;
-            EnsureRTs(desc.width, desc.height);
-
-            CommandBuffer cmd = CommandBufferPool.Get("SSPR");
-            using (new ProfilingScope(cmd, profilingSampler))
-            {
-                Matrix4x4 view = cam.worldToCameraMatrix;
-                Matrix4x4 proj = GL.GetGPUProjectionMatrix(cam.projectionMatrix, true);
-                Matrix4x4 vp = proj * view;
-
-                var data = new PassData
-                {
-                    cs = m_CS,
-                    kClear = m_KClear,
-                    kHash = m_KHash,
-                    kResolve = m_KResolve,
-                    kFill = m_KFill,
-                    colorRT = m_ColorRT,
-                    hashRT = m_HashRT,
-                    rtSize = new Vector2Int(m_ColorRT.rt.width, m_ColorRT.rt.height),
-                    vp = vp,
-                    invVP = vp.inverse,
-                    camForward = cam.transform.forward,
-                    planeY = m_Settings.planeY,
-                    stretchI = m_Settings.stretchIntensity,
-                    stretchT = m_Settings.stretchThreshold,
-                    hasDepthOpaque = true
-                };
-                DispatchSSPR(cmd, data);
-            }
-
-            context.ExecuteCommandBuffer(cmd);
-            CommandBufferPool.Release(cmd);
-        }
-#pragma warning restore 618, 672
-
-        // ----- Render Graph (URP 17 默认路径) -----
-        public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
-        {
-            if (m_CS == null)
-                return;
-
-            UniversalResourceData resources = frameData.Get<UniversalResourceData>();
-            UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
-
-            var desc = cameraData.cameraTargetDescriptor;
-            EnsureRTs(desc.width, desc.height);
-            if (m_ColorRT == null || m_HashRT == null)
-                return;
-
-            var cam = cameraData.camera;
-            Matrix4x4 view = cam.worldToCameraMatrix;
-            Matrix4x4 proj = GL.GetGPUProjectionMatrix(cam.projectionMatrix, true);
-            Matrix4x4 vp = proj * view;
-
-            // Import 持久 RT 进 RenderGraph
-            TextureHandle colorHandle = renderGraph.ImportTexture(m_ColorRT);
-            TextureHandle hashHandle = renderGraph.ImportTexture(m_HashRT);
-
-            using (var builder = renderGraph.AddUnsafePass<PassData>("SSPR", out var passData, profilingSampler))
-            {
-                passData.cs = m_CS;
-                passData.kClear = m_KClear;
-                passData.kHash = m_KHash;
-                passData.kResolve = m_KResolve;
-                passData.kFill = m_KFill;
-                passData.colorRT = m_ColorRT;
-                passData.hashRT = m_HashRT;
-                passData.rtSize = new Vector2Int(m_ColorRT.rt.width, m_ColorRT.rt.height);
-                passData.vp = vp;
-                passData.invVP = vp.inverse;
-                passData.camForward = cam.transform.forward;
-                passData.planeY = m_Settings.planeY;
-                passData.stretchI = m_Settings.stretchIntensity;
-                passData.stretchT = m_Settings.stretchThreshold;
-                passData.hasDepthOpaque = true;
-
-                // 声明依赖：需要相机深度与不透明色（若有效）
-                if (resources.cameraDepthTexture.IsValid())
-                {
-                    passData.depthHandle = resources.cameraDepthTexture;
-                    builder.UseTexture(resources.cameraDepthTexture, AccessFlags.Read);
-                }
-                if (resources.cameraOpaqueTexture.IsValid())
-                {
-                    passData.opaqueHandle = resources.cameraOpaqueTexture;
-                    builder.UseTexture(resources.cameraOpaqueTexture, AccessFlags.Read);
-                }
-
-                builder.UseTexture(colorHandle, AccessFlags.ReadWrite);
-                builder.UseTexture(hashHandle, AccessFlags.ReadWrite);
-                builder.AllowPassCulling(false);
-
-                builder.SetRenderFunc((PassData data, UnsafeGraphContext ctx) =>
-                {
-                    CommandBuffer cmd = CommandBufferHelpers.GetNativeCommandBuffer(ctx.cmd);
-                    DispatchSSPR(cmd, data);
-                });
-            }
         }
     }
 }

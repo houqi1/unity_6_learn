@@ -67,7 +67,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Active: 1
   settings:
-    planeY: 0
+    planeY: 3.14
     resolutionScale: 0.5
     stretchIntensity: 0.5
     stretchThreshold: 0.7

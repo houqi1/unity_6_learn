@@ -24,7 +24,14 @@ Shader "Custom/TreeTrunk"
         _DiffuseWrap ("Diffuse Wrap", Range(0, 1)) = 0.2
         // Diffuse 不乘灯光颜色，改乘此自定义色（仍受阴影/衰减影响）
         _DiffuseColor ("Diffuse Color", Color) = (1, 1, 1, 1)
+        // 基础自发光：albedo * color（始终生效）
         [HDR] _EmissionColor ("Emission Color (HDR)", Color) = (0, 0, 0, 1)
+
+        [Header(Emission Map Optional)]
+        // 额外自发光层：与上面的 Emission Color 独立叠加
+        [Toggle(_EMISSIONMAP)] _UseEmissionMap ("Use Emission Map", Float) = 0
+        _EmissionMap ("Emission Map", 2D) = "black" {}
+        [HDR] _EmissionMapColor ("Emission Map Color (HDR)", Color) = (1, 1, 1, 1)
 
         [Header(Detail Optional)]
         [Toggle(_DETAIL)] _UseDetail ("Use Detail Maps", Float) = 0
@@ -75,6 +82,7 @@ Shader "Custom/TreeTrunk"
 
             #pragma shader_feature_local _NORMALPACK_RG _NORMALPACK_AG _NORMALPACK_RGB
             #pragma shader_feature_local _MASKMAP
+            #pragma shader_feature_local _EMISSIONMAP
             #pragma shader_feature_local _DETAIL
 
             #define TRUNK_FORWARD_PASS 1
