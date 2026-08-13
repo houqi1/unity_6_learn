@@ -26,6 +26,12 @@ CBUFFER_START(UnityPerMaterial)
     half   _DiffuseWrap;
     half4  _DiffuseColor;
     half4  _EmissionColor;
+    half4  _RimColor;
+    half   _RimPower;
+    half   _RimStrength;
+    half   _RimLightBlend;
+    half   _SphereNormalBlend;
+    float4 _SphereCenterOffset;
     half4  _TranslucencyColor;
     half   _TranslucencyPower;
     half   _TranslucencyStrength;
@@ -158,6 +164,40 @@ half DiffuseWrapNdotL(half3 normalWS, half3 lightDirWS, half wrap)
     return saturate((NdotL + w) / (1.0h + w));
 }
 
+// Fresnel 边缘光：rim = (1 - N·V)^power
+// lightBlend：0 纯 Rim 色；1 乘主光 color*atten（随光照明暗）
+half3 RimLighting(half3 normalWS, half3 viewDirWS, half3 lightColor, half lightAtten)
+{
+    half NdotV = saturate(dot(normalWS, viewDirWS));
+    half fresnel = pow(saturate(1.0h - NdotV), _RimPower);
+    half3 rimTint = lerp(half3(1, 1, 1), lightColor * lightAtten, saturate(_RimLightBlend));
+    return _RimColor.rgb * fresnel * _RimStrength * rimTint;
+}
+
+// 球心 = 物体世界位置(Pivot / M 的平移) + 自定义世界空间偏移
+float3 GetLeafSphereCenterWS()
+{
+    float3 pivotWS = float3(
+        UNITY_MATRIX_M._m03,
+        UNITY_MATRIX_M._m13,
+        UNITY_MATRIX_M._m23);
+    return pivotWS + _SphereCenterOffset.xyz;
+}
+
+// 网格+Bump 法线 与 球形法线 lerp；blend=0 时保持原样
+// 球法线不随 VFACE 翻转：始终从球心指向表面，保证树冠一体受光
+half3 ApplySphericalNormal(half3 geometryNormalWS, float3 positionWS)
+{
+    half blend = saturate(_SphereNormalBlend);
+    if (blend <= 1e-5h)
+        return geometryNormalWS;
+
+    float3 centerWS = GetLeafSphereCenterWS();
+    float3 fromCenter = positionWS - centerWS;
+    half3 sphereN = half3(normalize(fromCenter + float3(1e-8, 0, 0)));
+    return normalize(lerp(geometryNormalWS, sphereN, blend));
+}
+
 // =============================================================================
 // Forward Lit
 // =============================================================================
@@ -222,6 +262,9 @@ half4 LeafFrag(LeafVaryings i, half face : VFACE) : SV_Target
     half3 normalWS = normalize(TransformTangentToWorld(normalTS, half3x3(tWS, bWS, nWS)));
 
     float3 positionWS = i.positionWS;
+    // 球形法线与几何法线 lerp，之后全部光照（漫反射/高光/GI/透光/边缘光）共用
+    normalWS = ApplySphericalNormal(normalWS, positionWS);
+
     half3  viewDirWS  = GetWorldSpaceNormalizeViewDir(positionWS);
 
     // --- Shadows / Main light ---
@@ -258,7 +301,10 @@ half4 LeafFrag(LeafVaryings i, half face : VFACE) : SV_Target
     // --- Translucency（叶片透光）---
     half3 translucency = Translucency(lightDir, viewDirWS, normalWS, lightCol, albedo) * occlusion;
 
-    half3 color = ambient + diffuse + specular + translucency + emission;
+    // --- Rim / 边缘光（Fresnel 轮廓）---
+    half3 rim = RimLighting(normalWS, viewDirWS, mainLight.color, lightAtten) * occlusion;
+
+    half3 color = ambient + diffuse + specular + translucency + emission + rim;
 
     // --- Additional lights ---
     #ifdef _ADDITIONAL_LIGHTS

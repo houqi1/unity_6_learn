@@ -92,6 +92,7 @@ MonoBehaviour:
   - {fileID: -7893295128165547882}
   - {fileID: 7391319092446245454}
   - {fileID: -3357603926938260329}
+  - {fileID: 812345678901234567}
 --- !u!114 &849379129802519247
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -157,3 +158,55 @@ MonoBehaviour:
   clamp:
     m_OverrideState: 0
     m_Value: 0.05
+--- !u!114 &812345678901234567
+MonoBehaviour:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9a625c4087642104baf340fa31183d4a, type: 3}
+  m_Name: VolumetricLight
+  m_EditorClassIdentifier: 
+  active: 1
+  overrideColor:
+    m_OverrideState: 1
+    m_Value: 0
+  color:
+    m_OverrideState: 0
+    m_Value: {r: 1, g: 0.96, b: 0.85, a: 1}
+  intensity:
+    m_OverrideState: 1
+    m_Value: 0.6
+  density:
+    m_OverrideState: 1
+    m_Value: 0.08
+  extinction:
+    m_OverrideState: 1
+    m_Value: 0.04
+  anisotropy:
+    m_OverrideState: 1
+    m_Value: 0.6
+  maxDistance:
+    m_OverrideState: 1
+    m_Value: 160
+  heightStart:
+    m_OverrideState: 1
+    m_Value: 3.14
+  heightFalloff:
+    m_OverrideState: 1
+    m_Value: 0.08
+  noiseAmp:
+    m_OverrideState: 0
+    m_Value: 0
+  shadowStrength:
+    m_OverrideState: 1
+    m_Value: 1
+  applyExtinction:
+    m_OverrideState: 1
+    m_Value: 0
+  compositeScale:
+    m_OverrideState: 1
+    m_Value: 1

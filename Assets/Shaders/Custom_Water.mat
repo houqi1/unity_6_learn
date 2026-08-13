@@ -26,7 +26,7 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _NormalMap:
-        m_Texture: {fileID: 2800000, guid: cdc798254c7aeaa4e904bd8040e4efcd, type: 3}
+        m_Texture: {fileID: 2800000, guid: db5277bfe9ca41258e5e31a3dc79b0c4, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
@@ -47,6 +47,14 @@ Material:
     - _ReflectionStrength: 1
     - _RefractionDistortion: 0.3
     - _RefractionStrength: 0.461
+    - _RippleAmplitude: 0.45
+    - _RippleAreaRadius: 28
+    - _RippleCellSize: 8
+    - _RippleExpandEase: 2.5
+    - _RippleMaxRadius: 5
+    - _RippleSharpness: 10
+    - _RippleSpeed: 0.4
+    - _RippleStrength: 1
     - _Smoothness: 0.85
     - _SpecularIntensity: 1.2
     m_Colors:

@@ -16,6 +16,18 @@ Shader "Custom/Water"
         _NormalSpeedB ("Normal Speed B (XY)", Vector) = (-0.02, 0.04, 0, 0)
         [KeywordEnum(RG, AG, RGB)] _NormalPack ("Normal Pack Mode", Float) = 2
 
+        [Header(Camera Ripples)]
+        // 摄像机周围世界网格上的随机落点，仅扰动法线（折射/SSPR/高光随之变化）
+        _RippleStrength ("Ripple Strength", Range(0, 3)) = 1
+        _RippleCellSize ("Ripple Cell Size", Range(1, 40)) = 8
+        _RippleMaxRadius ("Ripple Max Radius", Range(0.5, 25)) = 5
+        _RippleSpeed ("Ripple Life Speed", Range(0.05, 2)) = 0.4
+        // 扩散缓动：1 = 匀速；>1 先快后慢（ease-out）；越大前期越猛、后期越拖
+        _RippleExpandEase ("Ripple Expand Ease", Range(1, 8)) = 2.5
+        _RippleSharpness ("Ripple Ring Sharpness", Range(0.5, 50)) = 10
+        _RippleAmplitude ("Ripple Amplitude", Range(0, 3)) = 0.45
+        _RippleAreaRadius ("Ripple Area Radius", Range(5, 100)) = 28
+
         [Header(SSPR Reflection)]
         // 反射来自 SSPR Feature 生成的 _SSPR_ColorRT
         // 水面只用 screenUV + bump 采样（映射已在 Compute 完成）

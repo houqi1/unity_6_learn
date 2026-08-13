@@ -14,6 +14,12 @@ Shader "Custom/Leaf"
         // 0 = RG (BC5 / 手工双通道), 1 = AG (DXT5nm / Unity 默认), 2 = RGB 全通道
         [KeywordEnum(RG, AG, RGB)] _NormalPack ("Normal Pack Mode", Float) = 0
 
+        [Header(Spherical Normal)]
+        // 0 = 仅网格+法线贴图；1 = 完全使用球形法线（作用于全部光照）
+        _SphereNormalBlend ("Sphere Normal Blend", Range(0, 1)) = 0
+        // 球心 = 物体世界坐标(Pivot) + 此偏移（世界空间）
+        _SphereCenterOffset ("Sphere Center Offset (WS)", Vector) = (0, 0, 0, 0)
+
         [Header(Mask)]
         _MaskMap ("Mask (R:AO G:Roughness B:Metallic)", 2D) = "white" {}
         _OcclusionStrength ("Occlusion Strength", Range(0, 1)) = 1
@@ -28,6 +34,14 @@ Shader "Custom/Leaf"
         // Diffuse 不乘灯光颜色，改乘此自定义色（仍受阴影/衰减影响）
         _DiffuseColor ("Diffuse Color", Color) = (1, 1, 1, 1)
         [HDR] _EmissionColor ("Emission Color (HDR)", Color) = (0, 0, 0, 1)
+
+        [Header(Rim Light)]
+        // Fresnel 边缘光：视角掠射时亮起（轮廓光）
+        [HDR] _RimColor ("Rim Color (HDR)", Color) = (0.55, 0.85, 0.35, 1)
+        _RimPower ("Rim Power", Range(0.5, 16)) = 3
+        _RimStrength ("Rim Strength", Range(0, 5)) = 1.2
+        // 0 = 纯 Rim 色；1 = 乘主光颜色与衰减
+        _RimLightBlend ("Rim Light Blend", Range(0, 1)) = 0.35
 
         [Header(Translucency)]
         _TranslucencyColor ("Translucency Color", Color) = (0.35, 0.55, 0.15, 1)

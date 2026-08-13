@@ -26,6 +26,14 @@ CBUFFER_START(UnityPerMaterial)
     float4 _NormalTiling;
     float4 _NormalSpeedA;
     float4 _NormalSpeedB;
+    half   _RippleStrength;
+    half   _RippleCellSize;
+    half   _RippleMaxRadius;
+    half   _RippleSpeed;
+    half   _RippleExpandEase;
+    half   _RippleSharpness;
+    half   _RippleAmplitude;
+    half   _RippleAreaRadius;
     half   _ReflectionStrength;
     half   _ReflectionFresnelPower;
     half   _ReflectionFresnelBias;
@@ -65,6 +73,91 @@ half3 SampleWaterNormalTS(float2 uv)
     half3 nA = DecodeDualChannelNormal(SAMPLE_TEXTURE2D(_NormalMap, sampler_NormalMap, uvA), _NormalStrength);
     half3 nB = DecodeDualChannelNormal(SAMPLE_TEXTURE2D(_NormalMap, sampler_NormalMap, uvB), _NormalStrength);
     return normalize(half3(nA.xy + nB.xy, nA.z * nB.z));
+}
+
+// -----------------------------------------------------------------------------
+// 摄像机周围随机波纹（仅扰动法线）
+// - 以相机 XZ 为中心取世界固定网格
+// - 每个格子内一个伪随机落点，按生命周期向外扩张的高斯环
+// - 输出 XZ 高度梯度，用于改 normalTS / normalWS
+// -----------------------------------------------------------------------------
+float Hash21(float2 p)
+{
+    p = frac(p * float2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return frac(p.x * p.y);
+}
+
+float2 Hash22(float2 p)
+{
+    float n = Hash21(p);
+    return float2(n, Hash21(p + float2(n, 19.19)));
+}
+
+// gradXZ = ∂H/∂x, ∂H/∂z（已乘 Strength）
+void SampleCameraRipples(float3 positionWS, out half2 gradXZ)
+{
+    gradXZ = half2(0, 0);
+
+    half strength = _RippleStrength;
+    if (strength <= 1e-4h)
+        return;
+
+    float2 pos = positionWS.xz;
+    float2 cam = _WorldSpaceCameraPos.xz;
+
+    float distToCam = length(pos - cam);
+    float areaR = max((float)_RippleAreaRadius, 1.0);
+    half areaFade = (half)(1.0 - smoothstep(areaR * 0.55, areaR, distToCam));
+    if (areaFade <= 1e-4h)
+        return;
+
+    float cell = max((float)_RippleCellSize, 0.5);
+    float2 origin = floor(cam / cell);
+    float time = _Time.y * max((float)_RippleSpeed, 1e-4);
+    float maxR = max((float)_RippleMaxRadius, 0.1);
+    float k = max((float)_RippleSharpness, 0.1);
+    float ampScale = (float)_RippleAmplitude * (float)areaFade;
+    // ease-out：radius = maxR * (1 - (1-life)^ease)，ease=1 匀速，>1 先快后慢
+    float ease = max((float)_RippleExpandEase, 1.0);
+
+    // 3×3 邻格：跟随相机移动，远处格子自然进出
+    [unroll]
+    for (int j = -1; j <= 1; ++j)
+    {
+        [unroll]
+        for (int i = -1; i <= 1; ++i)
+        {
+            float2 id = origin + float2(i, j);
+            float2 rnd = Hash22(id);
+            float rndLife = Hash21(id + float2(17.13, 91.7));
+
+            float2 center = (id + rnd) * cell;
+
+            float life = frac(time + rndLife * 7.0);
+            float fade = life * (1.0 - life) * 4.0;
+            // 先快后慢的扩散进度
+            float expand = 1.0 - pow(1.0 - life, ease);
+            float radius = expand * maxR;
+
+            float2 d = pos - center;
+            float dist = length(d);
+            float ring = dist - radius;
+
+            float g = exp(-ring * ring * k);
+            float wave = g * fade * ampScale;
+
+            // ∂wave/∂dist = wave * (-2 · ring · k)
+            if (dist > 1e-5)
+            {
+                float dWave_ddist = wave * (-2.0 * ring * k);
+                float2 dir = d / dist;
+                gradXZ += (half2)(dir * dWave_ddist);
+            }
+        }
+    }
+
+    gradXZ *= strength;
 }
 
 float2 ProjectiveToUV(float4 projective)
@@ -173,10 +266,19 @@ half4 WaterFrag(WaterVaryings i) : SV_Target
     float2 screenUV   = ProjectiveToUV(screenPos);
 
     half3 normalTS = SampleWaterNormalTS(i.uv);
+
+    // 摄像机周围随机环形波纹：只改法线（折射/SSPR/高光/菲涅尔随之变化，不改颜色/泡沫）
+    half2 rippleGrad;
+    SampleCameraRipples(positionWS, rippleGrad);
+    normalTS.xy += rippleGrad;
+    normalTS = normalize(normalTS);
+
     half3 nWS = normalize(i.normalWS);
     half3 tWS = normalize(i.tangentWS.xyz);
     half3 bWS = cross(nWS, tWS) * i.tangentWS.w;
     half3 normalWS = normalize(TransformTangentToWorld(normalTS, half3x3(tWS, bWS, nWS)));
+    // 水平水面：再叠一层世界 XZ 梯度，避免切线朝向与世界轴不一致时波纹偏斜
+    normalWS = normalize(normalWS + half3(-rippleGrad.x, 0.0h, -rippleGrad.y));
 
     // 水深
     float sceneEyeDepth = LinearEyeDepth(SampleSceneDepth(screenUV), _ZBufferParams);
