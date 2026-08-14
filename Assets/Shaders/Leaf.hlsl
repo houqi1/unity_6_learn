@@ -127,10 +127,22 @@ struct LeafVaryings
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+// Alpha Clip 源：默认 BaseMap.A；开启 _CLIP_BASEMAP_R 时用 BaseMap.R
+// 再乘 BaseColor.a 与 AlphaScale（与原先 A 通道逻辑一致）
+half GetLeafClipAlpha(half4 baseSample)
+{
+#if defined(_CLIP_BASEMAP_R)
+    half a = baseSample.r * _BaseColor.a * _AlphaScale;
+#else
+    half a = baseSample.a * _BaseColor.a * _AlphaScale;
+#endif
+    return saturate(a);
+}
+
 half SampleLeafAlpha(float2 uv)
 {
-    half a = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv).a * _BaseColor.a * _AlphaScale;
-    return saturate(a);
+    half4 baseSample = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv);
+    return GetLeafClipAlpha(baseSample);
 }
 
 void LeafClipAlpha(float2 uv)
@@ -236,10 +248,11 @@ half4 LeafFrag(LeafVaryings i, half face : VFACE) : SV_Target
     UNITY_SETUP_INSTANCE_ID(i);
     UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
 
-    // --- Albedo + Alpha ---
+    // --- Albedo + Alpha Clip（不透明 cutout）---
     half4 baseSample = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, i.uv);
     half3 albedo = baseSample.rgb * _BaseColor.rgb;
-    half  alpha  = saturate(baseSample.a * _BaseColor.a * _AlphaScale);
+    half  alpha  = GetLeafClipAlpha(baseSample);
+    clip(alpha - _Cutoff);
 
     // --- Mask: AO / Roughness / Metallic ---
     half occlusion = 1.0h;
@@ -329,7 +342,7 @@ half4 LeafFrag(LeafVaryings i, half face : VFACE) : SV_Target
     #endif
 
     color = MixFog(color, i.fogFactor);
-    return half4(color, alpha);
+    return half4(color, 1.0h);
 }
 
 #endif // LEAF_FORWARD_PASS

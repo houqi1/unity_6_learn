@@ -5,8 +5,10 @@ Shader "Custom/Leaf"
         [Header(Base)]
         [MainColor] _BaseColor ("Base Color", Color) = (1, 1, 1, 1)
         [MainTexture] _BaseMap ("Albedo (RGB) Alpha (A)", 2D) = "white" {}
-        _Cutoff ("Alpha Clip (Shadow/Depth)", Range(0, 1)) = 0.35
+        _Cutoff ("Alpha Clip Threshold", Range(0, 1)) = 0.35
         _AlphaScale ("Alpha Scale", Range(0, 2)) = 1
+        // 开启后用 BaseMap.R 做 Alpha Clip；关闭则用 BaseMap.A
+        [Toggle(_CLIP_BASEMAP_R)] _ClipBaseMapR ("Clip Use BaseMap R", Float) = 0
 
         [Header(Normal Dual Channel)]
         [Normal] _BumpMap ("Normal Map (Dual Channel)", 2D) = "bump" {}
@@ -57,24 +59,20 @@ Shader "Custom/Leaf"
 
         [Header(Rendering)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 0
-        [Enum(Off, 0, On, 1)] _ZWrite ("ZWrite", Float) = 0
-        [Enum(UnityEngine.Rendering.CompareFunction)] _ZTest ("ZTest", Float) = 4
-        [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend ("Src Blend", Float) = 5
-        [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend ("Dst Blend", Float) = 10
     }
 
     SubShader
     {
         Tags
         {
-            "RenderType" = "Transparent"
-            "Queue" = "Transparent"
+            "RenderType" = "TransparentCutout"
+            "Queue" = "AlphaTest"
             "RenderPipeline" = "UniversalPipeline"
             "IgnoreProjector" = "True"
         }
 
         // ------------------------------------------------------------------
-        // Forward Lit — Alpha Blend
+        // Forward Lit — Opaque + Alpha Clip
         // ------------------------------------------------------------------
         Pass
         {
@@ -82,11 +80,9 @@ Shader "Custom/Leaf"
             Tags { "LightMode" = "UniversalForward" }
 
             Cull [_Cull]
-            ZWrite [_ZWrite]
-            ZTest [_ZTest]
-            Blend [_SrcBlend] [_DstBlend]
-            // 预乘关闭：标准 AlphaBlend = SrcAlpha OneMinusSrcAlpha
-            BlendOp Add
+            ZWrite On
+            ZTest LEqual
+            Blend One Zero
 
             HLSLPROGRAM
             #pragma target 3.5
@@ -105,6 +101,7 @@ Shader "Custom/Leaf"
             #pragma shader_feature_local _NORMALPACK_RG _NORMALPACK_AG _NORMALPACK_RGB
             #pragma shader_feature_local _MASKMAP
             #pragma shader_feature_local _WIND
+            #pragma shader_feature_local _CLIP_BASEMAP_R
 
             #define LEAF_FORWARD_PASS 1
             #include "Leaf.hlsl"
@@ -112,7 +109,7 @@ Shader "Custom/Leaf"
         }
 
         // ------------------------------------------------------------------
-        // Shadow Caster — Alpha Clip（阴影需要硬裁切）
+        // Shadow Caster — Alpha Clip
         // ------------------------------------------------------------------
         Pass
         {
@@ -132,6 +129,7 @@ Shader "Custom/Leaf"
             #pragma multi_compile_instancing
             #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
             #pragma shader_feature_local _WIND
+            #pragma shader_feature_local _CLIP_BASEMAP_R
 
             #define LEAF_SHADOW_PASS 1
             #include "Leaf.hlsl"
@@ -157,6 +155,7 @@ Shader "Custom/Leaf"
 
             #pragma multi_compile_instancing
             #pragma shader_feature_local _WIND
+            #pragma shader_feature_local _CLIP_BASEMAP_R
 
             #define LEAF_DEPTH_PASS 1
             #include "Leaf.hlsl"
@@ -182,6 +181,7 @@ Shader "Custom/Leaf"
             #pragma multi_compile_instancing
             #pragma shader_feature_local _NORMALPACK_RG _NORMALPACK_AG _NORMALPACK_RGB
             #pragma shader_feature_local _WIND
+            #pragma shader_feature_local _CLIP_BASEMAP_R
 
             #define LEAF_DEPTHNORMALS_PASS 1
             #include "Leaf.hlsl"

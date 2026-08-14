@@ -50,7 +50,11 @@ Material:
     - _Metallic: 0
     - _NormalPack: 0
     - _OcclusionStrength: 1
+    - _RimLightBlend: 0.35
+    - _RimPower: 16
+    - _RimStrength: 0.13
     - _Smoothness: 0.359
+    - _SphereNormalBlend: 1
     - _SrcBlend: 5
     - _TranslucencyDistortion: 0.213
     - _TranslucencyPower: 1.7
@@ -66,6 +70,8 @@ Material:
     - _BaseColor: {r: 0.88084596, g: 0.8862745, b: 0.16470584, a: 1}
     - _DiffuseColor: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0.6528301, g: 0.02833029, b: 0.02833029, a: 1}
+    - _RimColor: {r: 0.44313726, g: 0.1647059, b: 0.19349311, a: 1}
+    - _SphereCenterOffset: {r: 0, g: -18.12, b: 0, a: 0}
     - _TranslucencyColor: {r: 1, g: 0.5798391, b: 0.3226415, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

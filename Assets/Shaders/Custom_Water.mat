@@ -48,8 +48,8 @@ Material:
     - _RefractionDistortion: 0.3
     - _RefractionStrength: 0.461
     - _RippleAmplitude: 0.45
-    - _RippleAreaRadius: 28
-    - _RippleCellSize: 8
+    - _RippleAreaRadius: 14
+    - _RippleCellSize: 3.2
     - _RippleExpandEase: 2.5
     - _RippleMaxRadius: 5
     - _RippleSharpness: 10

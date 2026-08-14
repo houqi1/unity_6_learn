@@ -42,6 +42,7 @@ Material:
     m_Floats:
     - _AlphaScale: 1
     - _BumpScale: 2
+    - _ClipBaseMapR: 0
     - _Cull: 0
     - _Cutoff: 0.335
     - _DiffuseWrap: 0.001
@@ -50,7 +51,11 @@ Material:
     - _Metallic: 0
     - _NormalPack: 0
     - _OcclusionStrength: 1
+    - _RimLightBlend: 0.35
+    - _RimPower: 3
+    - _RimStrength: 0
     - _Smoothness: 0.359
+    - _SphereNormalBlend: 0
     - _SrcBlend: 5
     - _TranslucencyDistortion: 0.139
     - _TranslucencyPower: 1.2
@@ -64,8 +69,10 @@ Material:
     - _ZWrite: 0
     m_Colors:
     - _BaseColor: {r: 1, g: 0.84551555, b: 0.427451, a: 1}
-    - _DiffuseColor: {r: 1, g: 1, b: 1, a: 1}
-    - _EmissionColor: {r: 0.5396226, g: 0, b: 0, a: 1}
+    - _DiffuseColor: {r: 1, g: 0, b: 0, a: 1}
+    - _EmissionColor: {r: 1.1581389, g: 0.1464062, b: 0.1464062, a: 1}
+    - _RimColor: {r: 0.55, g: 0.85, b: 0.35, a: 1}
+    - _SphereCenterOffset: {r: 0, g: 0, b: 0, a: 0}
     - _TranslucencyColor: {r: 1, g: 0.111320674, b: 0.13169737, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

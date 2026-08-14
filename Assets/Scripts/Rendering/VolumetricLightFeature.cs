@@ -101,7 +101,10 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             return;
         }
 
-        m_Pass.Setup(settings, m_Material, volume, source.specifiedLight);
+        if (source.intensity <= 0.001f)
+            return;
+
+        m_Pass.Setup(settings, m_Material, volume, source);
         m_Pass.renderPassEvent = settings.injectionPoint;
         m_Pass.ConfigureInput(ScriptableRenderPassInput.Depth);
         m_Pass.requiresIntermediateTexture = true;
@@ -154,6 +157,12 @@ public class VolumetricLightFeature : ScriptableRendererFeature
         static readonly int ID_SpecifiedVP = Shader.PropertyToID("_SpecifiedLightVP");
         static readonly int ID_SpecifiedShadow = Shader.PropertyToID("_SpecifiedShadowMap");
         static readonly int ID_VolumeTex = Shader.PropertyToID("_VolumeTex");
+        static readonly int ID_UseCylinder = Shader.PropertyToID("_UseCylinder");
+        static readonly int ID_CylinderOrigin = Shader.PropertyToID("_CylinderOrigin");
+        static readonly int ID_CylinderDir = Shader.PropertyToID("_CylinderDir");
+        static readonly int ID_CylinderRadius = Shader.PropertyToID("_CylinderRadius");
+        static readonly int ID_CylinderHeight = Shader.PropertyToID("_CylinderHeight");
+        static readonly int ID_CylinderEdgeFade = Shader.PropertyToID("_CylinderEdgeFade");
 
         static readonly ShaderTagId k_ShadowCaster = new ShaderTagId("ShadowCaster");
         static readonly List<ShaderTagId> k_ShadowTags = new List<ShaderTagId> { k_ShadowCaster };
@@ -161,6 +170,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
         Settings m_Settings;
         Material m_Material;
         VolumetricLightVolume m_Volume;
+        VolumetricLightSource m_Source;
         Light m_Light;
 
         public VolumetricLightPass()
@@ -168,12 +178,13 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             profilingSampler = new ProfilingSampler("VolumetricLight");
         }
 
-        public void Setup(Settings settings, Material material, VolumetricLightVolume volume, Light light)
+        public void Setup(Settings settings, Material material, VolumetricLightVolume volume, VolumetricLightSource source)
         {
             m_Settings = settings ?? new Settings();
             m_Material = material;
             m_Volume = volume;
-            m_Light = light;
+            m_Source = source;
+            m_Light = source != null ? source.specifiedLight : null;
         }
 
         class SharedParams
@@ -204,6 +215,12 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             public float depthReject;
             public Vector4 volumeTexel;
             public bool useMainCascadeFlag;
+            public float useCylinder;
+            public Vector3 cylinderOrigin;
+            public Vector3 cylinderDir;
+            public float cylinderRadius;
+            public float cylinderHeight;
+            public float cylinderEdgeFade;
         }
 
         class ShadowPassData
@@ -287,9 +304,11 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 return;
             travelDir.Normalize();
 
-            Color lightCol = m_Volume.overrideColor.value
-                ? m_Volume.color.value
-                : m_Light.color * m_Light.intensity;
+            Color srcColor = m_Source != null ? m_Source.color : Color.white;
+            float srcIntensity = m_Source != null ? Mathf.Max(0f, m_Source.intensity) : 1f;
+            Color volTint = m_Volume.color.value;
+            Color lightCol = srcColor * volTint;
+            float finalIntensity = srcIntensity * m_Volume.intensity.value;
 
             bool useMain = IsMainDirectional(lightData, m_Light);
             if (useMain && m_Light.shadows == LightShadows.None)
@@ -320,7 +339,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 shadowProj = shadowProj,
                 lightTravelDir = travelDir,
                 lightColor = lightCol,
-                intensity = m_Volume.intensity.value,
+                intensity = finalIntensity,
                 density = m_Volume.density.value,
                 extinction = m_Volume.extinction.value,
                 anisotropy = m_Volume.anisotropy.value,
@@ -338,7 +357,13 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 debugMode = (float)m_Settings.debugMode,
                 depthReject = 0.002f,
                 volumeTexel = new Vector4(1f / vw, 1f / vh, vw, vh),
-                useMainCascadeFlag = useMain
+                useMainCascadeFlag = useMain,
+                useCylinder = m_Source != null && m_Source.useCylinderVolume ? 1f : 0f,
+                cylinderOrigin = m_Source != null ? m_Source.VolumeTransform.position : Vector3.zero,
+                cylinderDir = travelDir,
+                cylinderRadius = m_Source != null ? Mathf.Max(0.01f, m_Source.cylinderRadius) : 8f,
+                cylinderHeight = m_Source != null ? Mathf.Max(0.01f, m_Source.cylinderHeight) : 40f,
+                cylinderEdgeFade = m_Source != null ? Mathf.Max(0f, m_Source.cylinderEdgeFade) : 1f
             };
 
             CoreUtils.SetKeyword(m_Material, "_MAIN_LIGHT_SHADOWS", useMain);
@@ -520,6 +545,12 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             cmd.SetGlobalVector(ID_VolumeTexel, p.volumeTexel);
             cmd.SetGlobalFloat(ID_SpecifiedShadowBias, 0.002f);
             cmd.SetGlobalMatrix(ID_SpecifiedVP, p.specifiedVP);
+            cmd.SetGlobalFloat(ID_UseCylinder, p.useCylinder);
+            cmd.SetGlobalVector(ID_CylinderOrigin, p.cylinderOrigin);
+            cmd.SetGlobalVector(ID_CylinderDir, p.cylinderDir);
+            cmd.SetGlobalFloat(ID_CylinderRadius, p.cylinderRadius);
+            cmd.SetGlobalFloat(ID_CylinderHeight, p.cylinderHeight);
+            cmd.SetGlobalFloat(ID_CylinderEdgeFade, p.cylinderEdgeFade);
         }
 
         static void WarnOnceMainShadowsOff()

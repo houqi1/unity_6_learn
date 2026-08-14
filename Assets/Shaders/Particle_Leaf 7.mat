@@ -7,11 +7,12 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Custom_Leaf 3
+  m_Name: Particle_Leaf 7
   m_Shader: {fileID: 4800000, guid: db7637ccd3cc422385a02a64a47f9d53, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords:
+  - _CLIP_BASEMAP_R
   - _MASKMAP
   - _NORMALPACK_RG
   - _WIND
@@ -27,7 +28,7 @@ Material:
     serializedVersion: 3
     m_TexEnvs:
     - _BaseMap:
-        m_Texture: {fileID: 2800000, guid: 4b7e5751211ba8b45b45d9781e30221a, type: 3}
+        m_Texture: {fileID: 2800000, guid: 10f40135d5f640c42bff828335e54be8, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _BumpMap:
@@ -42,9 +43,10 @@ Material:
     m_Floats:
     - _AlphaScale: 1
     - _BumpScale: 1
+    - _ClipBaseMapR: 1
     - _Cull: 0
     - _Cutoff: 0.335
-    - _DiffuseWrap: 0.845
+    - _DiffuseWrap: 0
     - _DstBlend: 10
     - _EmissionIntensity: 0
     - _Metallic: 0
@@ -67,7 +69,7 @@ Material:
     - _ZTest: 4
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 0.88084596, g: 0.8862745, b: 0.16470584, a: 1}
+    - _BaseColor: {r: 1, g: 0.1554907, b: 0.09803921, a: 1}
     - _DiffuseColor: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0.6528301, g: 0.02833029, b: 0.02833029, a: 1}
     - _RimColor: {r: 0.55, g: 0.85, b: 0.35, a: 1}

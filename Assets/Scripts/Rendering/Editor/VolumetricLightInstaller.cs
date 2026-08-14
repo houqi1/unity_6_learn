@@ -95,6 +95,8 @@ public static class VolumetricLightInstaller
         if (source == null)
             source = directional.gameObject.AddComponent<VolumetricLightSource>();
         source.specifiedLight = directional;
+        source.color = directional.color;
+        source.intensity = 0.6f;
         EditorUtility.SetDirty(source);
 
         var volumes = Object.FindObjectsByType<Volume>(FindObjectsSortMode.None);
@@ -130,7 +132,9 @@ public static class VolumetricLightInstaller
             vol = profile.Add<VolumetricLightVolume>(true);
         vol.active = true;
         vol.intensity.overrideState = true;
-        vol.intensity.value = 0.6f;
+        vol.intensity.value = 1f;
+        vol.color.overrideState = true;
+        vol.color.value = Color.white;
         vol.density.overrideState = true;
         vol.shadowStrength.overrideState = true;
         EditorUtility.SetDirty(profile);

@@ -30,6 +30,12 @@ float4   _VolumeTexelSize;
 float2   _BlurDirection;
 float    _SpecifiedShadowBias;
 float4x4 _SpecifiedLightVP;
+float    _UseCylinder;
+float3   _CylinderOrigin;
+float3   _CylinderDir;
+float    _CylinderRadius;
+float    _CylinderHeight;
+float    _CylinderEdgeFade;
 
 TEXTURE2D_FLOAT(_SpecifiedShadowMap);
 SAMPLER(sampler_SpecifiedShadowMap);
@@ -46,6 +52,29 @@ float HenyeyGreenstein(float mu, float g)
 float HeightAtten(float y)
 {
     return exp(-_HeightFalloff * max(0.0, y - _HeightStart));
+}
+
+float CylinderShape(float3 p)
+{
+    if (_UseCylinder < 0.5)
+        return 1.0;
+
+    float3 axis = _CylinderDir;
+    float axisLen = length(axis);
+    if (axisLen < 1e-5)
+        return 0.0;
+    axis /= axisLen;
+
+    float3 rel = p - _CylinderOrigin;
+    float along = dot(rel, axis);
+    float radial = length(rel - axis * along) - _CylinderRadius;
+    float caps = max(-along, along - _CylinderHeight);
+    float sdf = radial > 0.0 && caps > 0.0
+        ? length(float2(radial, caps))
+        : max(radial, caps);
+
+    float fade = max(_CylinderEdgeFade, 1e-4);
+    return 1.0 - smoothstep(0.0, fade, sdf);
 }
 
 float CheapNoise(float3 p, float t)
@@ -126,7 +155,12 @@ float4 MarchVolumetric(float2 uv, float2 pixelPos)
             break;
 
         float3 p = camPos + viewDir * t;
-        float density = _Density * HeightAtten(p.y);
+        float density = _Density * HeightAtten(p.y) * CylinderShape(p);
+        if (density < 1e-5)
+        {
+            t += stepSize;
+            continue;
+        }
         if (_NoiseAmp > 0.001)
             density *= 1.0 + _NoiseAmp * CheapNoise(p, _AnimTime);
 
@@ -194,13 +228,6 @@ float4 CompositeVolumetric(float2 uv, float3 scene)
         return float4(_LightTravelDir * 0.5 + 0.5, 1);
 
     float4 vol = SAMPLE_TEXTURE2D(_VolumeTex, sampler_VolumeTex, uv);
-
-    float dHi = LinearEyeDepth(SampleSceneDepth(uv), _ZBufferParams);
-    float2 volTexel = _VolumeTexelSize.xy;
-    float2 snapped = (floor(uv / max(volTexel, 1e-6)) + 0.5) * volTexel;
-    float dLo = LinearEyeDepth(SampleSceneDepth(snapped), _ZBufferParams);
-    float edge = saturate(1.0 - abs(dHi - dLo) / max(dHi, 1e-3) / 0.05);
-    vol.rgb *= edge;
 
     if (_DebugMode > 0.5 && _DebugMode < 1.5)
         return float4(vol.rgb, 1);

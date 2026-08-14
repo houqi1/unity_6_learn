@@ -18,9 +18,9 @@ Material:
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 1
   m_DoubleSidedGI: 1
-  m_CustomRenderQueue: 3000
+  m_CustomRenderQueue: 2450
   stringTagMap:
-    RenderType: Transparent
+    RenderType: TransparentCutout
   disabledShaderPasses: []
   m_LockedProperties: 
   m_SavedProperties:
@@ -45,7 +45,6 @@ Material:
     - _Cull: 0
     - _Cutoff: 0.35
     - _DiffuseWrap: 0.35
-    - _DstBlend: 10
     - _Metallic: 0
     - _NormalPack: 2
     - _OcclusionStrength: 1
@@ -54,7 +53,6 @@ Material:
     - _RimStrength: 1.2
     - _Smoothness: 0.35
     - _SphereNormalBlend: 0
-    - _SrcBlend: 5
     - _TranslucencyDistortion: 0.2
     - _TranslucencyPower: 2
     - _TranslucencyStrength: 0.45
@@ -63,8 +61,6 @@ Material:
     - _WindFrequency: 1.5
     - _WindSpeed: 1.2
     - _WindStrength: 0.15
-    - _ZTest: 4
-    - _ZWrite: 0
     m_Colors:
     - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
     - _DiffuseColor: {r: 1, g: 1, b: 1, a: 1}

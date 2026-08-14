@@ -13,9 +13,10 @@ using UnityEngine.Rendering.Universal;
 public class VolumetricLightVolume : VolumeComponent, IPostProcessComponent
 {
     [Header("Light")]
-    public BoolParameter overrideColor = new BoolParameter(false);
-    public ColorParameter color = new ColorParameter(new Color(1f, 0.96f, 0.85f), true, false, true);
-    public ClampedFloatParameter intensity = new ClampedFloatParameter(0.6f, 0f, 8f);
+    [Tooltip("乘在 Source 颜色上的染色，默认白=不改色。")]
+    public ColorParameter color = new ColorParameter(Color.white, true, false, true);
+    [Tooltip("总强度倍率，乘在 Source 强度上。0 关闭体积光。")]
+    public ClampedFloatParameter intensity = new ClampedFloatParameter(1f, 0f, 8f);
 
     [Header("Media")]
     public ClampedFloatParameter density = new ClampedFloatParameter(0.08f, 0f, 1f);
