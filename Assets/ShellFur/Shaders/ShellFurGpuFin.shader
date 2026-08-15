@@ -14,7 +14,6 @@ Shader "Custom/ShellFurGpuFin"
         _Thickness ("Strand Thickness", Range(0.05, 1.0)) = 0.55
         _Occlusion ("Root Occlusion", Range(0, 1)) = 0.55
         _AlphaCutoff ("Base Alpha Cutoff", Range(0, 1)) = 0.15
-        _TipAlphaCutoff ("Tip Alpha Cutoff", Range(0, 1)) = 1
 
         [Header(Shell Shape)]
         _ShellCount ("Shell Count", Float) = 32

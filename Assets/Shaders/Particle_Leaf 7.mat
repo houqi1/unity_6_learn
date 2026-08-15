@@ -60,7 +60,7 @@ Material:
     - _SrcBlend: 5
     - _TranslucencyDistortion: 0.213
     - _TranslucencyPower: 1.7
-    - _TranslucencyStrength: 1.16
+    - _TranslucencyStrength: 1.69
     - _UseMaskMap: 1
     - _UseWind: 1
     - _WindFrequency: 1.48
@@ -69,7 +69,7 @@ Material:
     - _ZTest: 4
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 1, g: 0.1554907, b: 0.09803921, a: 1}
+    - _BaseColor: {r: 1, g: 0.7362991, b: 0.6313726, a: 1}
     - _DiffuseColor: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0.6528301, g: 0.02833029, b: 0.02833029, a: 1}
     - _RimColor: {r: 0.55, g: 0.85, b: 0.35, a: 1}

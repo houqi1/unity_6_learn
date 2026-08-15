@@ -53,6 +53,7 @@ Shader "Custom/Water"
         _FoamIntensity ("Foam Intensity", Range(0, 2)) = 0.6
 
         [Header(Debug)]
+        [Toggle(_DEBUG_NORMALS)] _DebugNormals ("Output Normals (WS)", Float) = 0
         [Toggle(_DEBUG_REFLECTION)] _DebugReflection ("Output Reflection Color Only", Float) = 0
 
         [Header(Rendering)]
@@ -90,6 +91,7 @@ Shader "Custom/Water"
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
 
             #pragma shader_feature_local _NORMALPACK_RG _NORMALPACK_AG _NORMALPACK_RGB
+            #pragma shader_feature_local _DEBUG_NORMALS
             #pragma shader_feature_local _DEBUG_REFLECTION
 
             #define WATER_FORWARD_PASS 1

@@ -160,6 +160,61 @@ void SampleCameraRipples(float3 positionWS, out half2 gradXZ)
     gradXZ *= strength;
 }
 
+// 粒子落水涟漪：CPU 环形缓冲，xy=世界 XZ，z=startTime，w=强度
+#define WATER_PARTICLE_RIPPLE_MAX 32
+float4 _ParticleRipples[WATER_PARTICLE_RIPPLE_MAX];
+float  _ParticleRippleCount;
+float  _ParticleRippleDuration;
+float  _ParticleRippleMaxRadius;
+float  _ParticleRippleStrength;
+float  _ParticleRippleTime;
+
+void SampleParticleRipples(float3 positionWS, inout half2 gradXZ)
+{
+    int count = (int)clamp(_ParticleRippleCount, 0.0, (float)WATER_PARTICLE_RIPPLE_MAX);
+    if (count <= 0)
+        return;
+
+    float duration = max((float)_ParticleRippleDuration, 1e-3);
+    float maxR = max((float)_ParticleRippleMaxRadius, 0.1);
+    float ease = max((float)_RippleExpandEase, 1.0);
+    float k = max((float)_RippleSharpness, 0.1);
+    float ampScale = max((float)_RippleAmplitude, 0.2) * max((float)_ParticleRippleStrength, 0.0);
+    float now = _ParticleRippleTime;
+    float2 pos = positionWS.xz;
+
+    [loop]
+    for (int i = 0; i < WATER_PARTICLE_RIPPLE_MAX; ++i)
+    {
+        if (i >= count)
+            break;
+
+        float4 ripple = _ParticleRipples[i];
+        if (ripple.w <= 1e-4)
+            continue;
+
+        float life = saturate((now - ripple.z) / duration);
+        if (life <= 0.0 || life >= 1.0)
+            continue;
+
+        float fade = life * (1.0 - life) * 4.0;
+        float expand = 1.0 - pow(1.0 - life, ease);
+        float radius = expand * maxR;
+
+        float2 d = pos - ripple.xy;
+        float dist = length(d);
+        float ring = dist - radius;
+        float g = exp(-ring * ring * k);
+        float wave = g * fade * ampScale * (float)ripple.w;
+
+        if (dist > 1e-5)
+        {
+            float dWave_ddist = wave * (-2.0 * ring * k);
+            gradXZ += (half2)((d / dist) * dWave_ddist);
+        }
+    }
+}
+
 float2 ProjectiveToUV(float4 projective)
 {
     return projective.xy / max(projective.w, 1e-5);
@@ -270,6 +325,7 @@ half4 WaterFrag(WaterVaryings i) : SV_Target
     // 摄像机周围随机环形波纹：只改法线（折射/SSPR/高光/菲涅尔随之变化，不改颜色/泡沫）
     half2 rippleGrad;
     SampleCameraRipples(positionWS, rippleGrad);
+    SampleParticleRipples(positionWS, rippleGrad);
     normalTS.xy += rippleGrad;
     normalTS = normalize(normalTS);
 
@@ -279,6 +335,10 @@ half4 WaterFrag(WaterVaryings i) : SV_Target
     half3 normalWS = normalize(TransformTangentToWorld(normalTS, half3x3(tWS, bWS, nWS)));
     // 水平水面：再叠一层世界 XZ 梯度，避免切线朝向与世界轴不一致时波纹偏斜
     normalWS = normalize(normalWS + half3(-rippleGrad.x, 0.0h, -rippleGrad.y));
+
+#if defined(_DEBUG_NORMALS)
+    return half4(normalWS * 0.5h + 0.5h, 1.0h);
+#endif
 
     // 水深
     float sceneEyeDepth = LinearEyeDepth(SampleSceneDepth(screenUV), _ZBufferParams);

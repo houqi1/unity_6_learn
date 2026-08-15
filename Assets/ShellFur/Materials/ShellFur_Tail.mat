@@ -36,7 +36,6 @@ Material:
     m_Ints: []
     m_Floats:
     - _AlphaCutoff: 0
-    - _TipAlphaCutoff: 1
     - _Cull: 2
     - _Density: 140
     - _FinBandStrength: 0.4
@@ -57,26 +56,31 @@ Material:
     - _GravityPower: 2
     - _GuideOffsetScale: 0.08
     - _Occlusion: 0
+    - _OcclusionToBaseColor: 0
+    - _OpaqueOutputAlpha: 0
     - _RimPower: 4.91
     - _RimStrength: 2.93
     - _ShadowStrength: 0.119
     - _ShellCount: 32
     - _ShellLayerOffset: 0
+    - _SkipSoftAlphaClip: 0
     - _Smoothness: 0.207
     - _StrainEmissionDistMax: 0.5
-    - _StrainEmissionDistMin: 0.172
+    - _StrainEmissionDistMin: 0.2
     - _StrainEmissionDistPower: 1
     - _StrainEmissionEnable: 1
     - _StrainEmissionIntensity: 0.5
     - _StrainEmissionTipPower: 8
     - _Thickness: 0.556
+    - _TipAlphaCutoff: 1
     - _UseKajiyaKay: 1
     - _UseProcedural: 0
     - _UseSmoothNormalsVC: 0
+    - _UseTipAlphaCutoff: 0
     m_Colors:
     - _BaseColor: {r: 0.07169801, g: 0.061552063, b: 0.061552063, a: 1}
     - _GravityDir: {r: 0, g: -1, b: 0, a: 0}
-    - _StrainEmissionColor: {r: 0, g: 0.9267019, b: 1.39772, a: 1}
+    - _StrainEmissionColor: {r: 0, g: 0.6650486, b: 1, a: 1}
     - _TipColor: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

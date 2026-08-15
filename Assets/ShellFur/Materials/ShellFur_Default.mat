@@ -55,6 +55,10 @@ Material:
     - _Gravity: 0.54
     - _GravityPower: 2
     - _Occlusion: 1
+    - _OcclusionToBaseColor: 0
+    - _OpaqueOutputAlpha: 0
+    - _SkipSoftAlphaClip: 0
+    - _UseTipAlphaCutoff: 0
     - _RimPower: 4.91
     - _RimStrength: 2.29
     - _ShadowStrength: 0

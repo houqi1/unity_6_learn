@@ -14,7 +14,11 @@ Shader "Custom/ShellFur"
         _Thickness ("Strand Thickness", Range(0.05, 1.0)) = 0.55
         _Occlusion ("Root Occlusion", Range(0, 1)) = 0.55
         _AlphaCutoff ("Base Alpha Cutoff", Range(0, 1)) = 0.15
+        [Toggle(_USE_TIP_ALPHA_CUTOFF)] _UseTipAlphaCutoff ("Use Tip Alpha Cutoff", Float) = 0
         _TipAlphaCutoff ("Tip Alpha Cutoff", Range(0, 1)) = 1
+        [Toggle(_SKIP_SOFT_ALPHA_CLIP)] _SkipSoftAlphaClip ("Skip Soft Alpha Clip", Float) = 0
+        [Toggle(_OPAQUE_OUTPUT_ALPHA)] _OpaqueOutputAlpha ("Output Opaque Alpha", Float) = 0
+        [Toggle(_OCCLUSION_TO_BASECOLOR)] _OcclusionToBaseColor ("Occlusion To Base Color", Float) = 0
 
         [Header(Shell Shape)]
         _ShellCount ("Shell Count (synced by script)", Float) = 32
@@ -91,6 +95,10 @@ Shader "Custom/ShellFur"
             #pragma multi_compile _ _FORWARD_PLUS
             #pragma multi_compile_fog
             #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
+            #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
+            #pragma shader_feature_local _OPAQUE_OUTPUT_ALPHA
+            #pragma shader_feature_local _OCCLUSION_TO_BASECOLOR
             #pragma shader_feature_local _USE_KAJIYA_KAY
             #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
             #pragma shader_feature_local _USE_CUSTOM_LIGHT_DIR
@@ -122,6 +130,8 @@ Shader "Custom/ShellFur"
             #pragma multi_compile_instancing
             #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
             #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
+            #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
             #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
 
             #include "ShellFur.hlsl"
@@ -147,6 +157,8 @@ Shader "Custom/ShellFur"
 
             #pragma multi_compile_instancing
             #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
+            #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
             #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
 
             #include "ShellFur.hlsl"

@@ -27,7 +27,6 @@ CBUFFER_START(UnityPerMaterial)
     float  _Thickness;
     float  _Occlusion;
     float  _AlphaCutoff;
-    float  _TipAlphaCutoff;
     float  _ShellCount;
     float  _ShellLayerOffset;
     float  _FurLength;
@@ -80,7 +79,7 @@ bool EvaluateFurMaskGpuFin(float2 furUV, float layer, out float alphaOut, out fl
     float density = SAMPLE_TEXTURE2D(_FurMap, sampler_FurMap, furUV).r;
     strandHeight = saturate(density * (1.0 + _FurLengthRandom) - _FurLengthRandom * 0.5);
     if (layer > strandHeight) return false;
-    float threshold = lerp(_AlphaCutoff, _TipAlphaCutoff, layer);
+    float threshold = lerp(_AlphaCutoff, 1.0, layer);
     if (density < threshold) return false;
     alphaOut = saturate((density - threshold) / max(1.0 - threshold, 1e-4));
 #endif
@@ -118,7 +117,7 @@ half3 ShadeShellFurGpuFin(float3 positionWS, float3 normalWS, float2 uv, float c
 
     float layer01 = h;
     float ao = lerp(1.0 - _Occlusion, 1.0, pow(abs(layer01), 0.55));
-    albedo = lerp(rootColor, albedo, ao);
+    albedo *= ao;
     albedo *= lerp(1.0 - _ShadowStrength, 1.0, layer01);
 
     float3 n = NormalizeNormalPerPixel(normalWS);
@@ -223,7 +222,7 @@ half4 ShellFurGpuFinFrag(Varyings input) : SV_Target
     half3 color = ShadeShellFurGpuFin(
         input.positionWS, input.normalWS, input.uv, input.height01, strandHeight);
     color = MixFog(color, input.fogFactor);
-    return half4(color, 1);
+    return half4(color, alpha);
 }
 
 #endif // SHELL_FUR_GPU_FIN_FORWARD
@@ -297,6 +296,7 @@ half4 ShellFurGpuFinShadowFrag(ShadowVaryings input) : SV_Target
         discard;
     alpha *= saturate(input.silhouette);
     alpha *= EvaluateFinHeightOpacity(input.height01);
+    clip(alpha - 0.01);
     return 0;
 }
 
