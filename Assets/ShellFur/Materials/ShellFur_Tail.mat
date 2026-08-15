@@ -36,6 +36,7 @@ Material:
     m_Ints: []
     m_Floats:
     - _AlphaCutoff: 0
+    - _TipAlphaCutoff: 1
     - _Cull: 2
     - _Density: 140
     - _FinBandStrength: 0.4

@@ -55,7 +55,7 @@ Material:
     - _RippleSharpness: 10
     - _RippleSpeed: 0.4
     - _RippleStrength: 1
-    - _Smoothness: 0.85
+    - _Smoothness: 1
     - _SpecularIntensity: 1.2
     m_Colors:
     - _DeepColor: {r: 0.05, g: 0.15, b: 0.25, a: 0.9}

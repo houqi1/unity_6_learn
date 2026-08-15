@@ -36,6 +36,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _Thickness;
     float  _Occlusion;
     float  _AlphaCutoff;
+    float  _TipAlphaCutoff;
     float  _ShellCount;
     float  _ShellLayerOffset;
     float  _FurLength;
@@ -209,7 +210,7 @@ bool EvaluateFurMask(float2 furUV, float layer, out float alphaOut, out float st
         return false;
 
     // Higher layers require higher density (classic shell fur cutoff).
-    float threshold = lerp(_AlphaCutoff, 1.0, layer);
+    float threshold = lerp(_AlphaCutoff, _TipAlphaCutoff, layer);
     if (density < threshold)
         return false;
 
@@ -233,7 +234,8 @@ half3 ShadeShellFur(float3 positionWS, float3 normalWS, float2 uv, float layer, 
     // Use abs() on pow bases — DX11 treats "pow may get negative" as a compile error.
     float layer01 = saturate(layer);
     float ao = lerp(1.0 - _Occlusion, 1.0, pow(abs(layer01), 0.55));
-    albedo *= ao;
+    // Occlude toward base/root color, not black.
+    albedo = lerp(rootColor, albedo, ao);
 
     // Extra self-shadowing between shells.
     albedo *= lerp(1.0 - _ShadowStrength, 1.0, layer01);
@@ -383,12 +385,9 @@ half4 ShellFurFrag(Varyings input) : SV_Target
     if (!EvaluateFurMask(input.furUV, input.layer, alpha, strandHeight))
         discard;
 
-    // Soft threshold for AlphaToMask / MSAA coverage.
-    clip(alpha - 0.01);
-
     half3 color = ShadeShellFur(input.positionWS, input.normalWS, input.uv, input.layer, strandHeight);
     color = MixFog(color, input.fogFactor);
-    return half4(color, alpha);
+    return half4(color, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -458,7 +457,6 @@ half4 ShellFurShadowFrag(ShadowVaryings input) : SV_Target
     float strandHeight;
     if (!EvaluateFurMask(input.furUV, input.layer, alpha, strandHeight))
         discard;
-    clip(alpha - 0.01);
     return 0;
 }
 
@@ -511,7 +509,6 @@ half4 ShellFurDepthFrag(DepthVaryings input) : SV_Target
     float strandHeight;
     if (!EvaluateFurMask(input.furUV, input.layer, alpha, strandHeight))
         discard;
-    clip(alpha - 0.01);
     return 0;
 }
 
@@ -668,14 +665,12 @@ half4 ShellFurFinFrag(FinVaryings input) : SV_Target
     // Only skip fully transparent pixels; mid-alpha is blended by the pipeline.
     if (alpha < 1.0 / 255.0)
         discard;
-#else
-    clip(alpha - 0.01);
 #endif
 
     // Root→tip color uses pure height01 (same role as shell layer), not silhouette-scaled layer.
     half3 color = ShadeShellFur(input.positionWS, input.normalWS, input.uv, input.height01, strandHeight);
     color = MixFog(color, input.fogFactor);
-    return half4(color, alpha);
+    return half4(color, 1);
 }
 
 struct FinShadowAttributes
@@ -741,7 +736,6 @@ half4 ShellFurFinShadowFrag(FinShadowVaryings input) : SV_Target
         discard;
     alpha *= saturate(input.silhouette);
     alpha *= EvaluateFinHeightOpacity(input.height01);
-    clip(alpha - 0.01);
     return 0;
 }
 

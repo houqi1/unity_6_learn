@@ -716,6 +716,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (src.HasProperty("_Thickness")) fin.SetFloat("_Thickness", src.GetFloat("_Thickness"));
         if (src.HasProperty("_Occlusion")) fin.SetFloat("_Occlusion", src.GetFloat("_Occlusion"));
         if (src.HasProperty("_AlphaCutoff")) fin.SetFloat("_AlphaCutoff", src.GetFloat("_AlphaCutoff"));
+        if (src.HasProperty("_TipAlphaCutoff")) fin.SetFloat("_TipAlphaCutoff", src.GetFloat("_TipAlphaCutoff"));
         if (src.HasProperty("_FurLengthRandom")) fin.SetFloat("_FurLengthRandom", src.GetFloat("_FurLengthRandom"));
         if (src.HasProperty("_Smoothness")) fin.SetFloat("_Smoothness", src.GetFloat("_Smoothness"));
         if (src.HasProperty("_RimPower")) fin.SetFloat("_RimPower", src.GetFloat("_RimPower"));
