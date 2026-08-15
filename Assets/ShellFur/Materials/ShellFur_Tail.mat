@@ -38,6 +38,8 @@ Material:
     - _AlphaCutoff: 0
     - _Cull: 2
     - _Density: 140
+    - _DiffuseBoostMin: 1
+    - _DiffuseBoostMax: 1
     - _FinBandStrength: 0.4
     - _FinExtrudeWeight: 1
     - _FinLengthScale: 1
@@ -77,9 +79,11 @@ Material:
     - _UseProcedural: 0
     - _UseSmoothNormalsVC: 0
     - _UseTipAlphaCutoff: 0
+    - _UseUvBend: 0
     m_Colors:
     - _BaseColor: {r: 0.07169801, g: 0.061552063, b: 0.061552063, a: 1}
     - _GravityDir: {r: 0, g: -1, b: 0, a: 0}
+    - _UVOffset: {r: 1, g: 0, b: 2, a: 0}
     - _StrainEmissionColor: {r: 0, g: 0.6650486, b: 1, a: 1}
     - _TipColor: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []

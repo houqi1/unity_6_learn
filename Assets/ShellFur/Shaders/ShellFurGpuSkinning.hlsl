@@ -30,6 +30,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _Occlusion;
     float  _AlphaCutoff;
     float  _TipAlphaCutoff;
+    float4 _UVOffset;
     float  _ShellCount;
     float  _ShellLayerOffset;
     float  _FurLength;
@@ -41,6 +42,8 @@ CBUFFER_START(UnityPerMaterial)
     float  _RimPower;
     float  _RimStrength;
     float  _ShadowStrength;
+    float  _DiffuseBoostMin;
+    float  _DiffuseBoostMax;
     float  _StrainEmissionEnable;
     half4  _StrainEmissionColor;
     float  _StrainEmissionIntensity;
@@ -172,6 +175,15 @@ float GetShellLayer(uint instanceId)
     return saturate(idx / max(count - 1.0, 1.0));
 }
 
+float2 ApplyFurUvBend(float2 furUV, float layer)
+{
+#if defined(_USE_UV_BEND)
+    float2 uvOffset = _UVOffset.xy * pow(saturate(layer), max(_UVOffset.z, 1e-4)) * 0.1;
+    furUV += uvOffset;
+#endif
+    return furUV;
+}
+
 bool EvaluateFurMaskGpu(float2 furUV, float layer, out float alphaOut, out float strandHeight)
 {
     alphaOut = 0.0;
@@ -234,6 +246,8 @@ half3 ShadeShellFurGpu(float3 positionWS, float3 normalWS, float2 uv, float laye
     mainLight.distanceAttenuation = 1.0;
     half NdotL = saturate(dot(n, mainLight.direction));
     half3 lighting = mainLight.color * (mainLight.shadowAttenuation * mainLight.distanceAttenuation * NdotL);
+    half diffuseBoost = lerp(_DiffuseBoostMin, _DiffuseBoostMax, layer01);
+    lighting *= diffuseBoost;
     half3 ambient = SampleSH(n) * ao;
     half3 color = albedo * (ambient + lighting);
 
@@ -243,7 +257,7 @@ half3 ShadeShellFurGpu(float3 positionWS, float3 normalWS, float2 uv, float laye
     {
         Light light = GetAdditionalLight(li, positionWS);
         half addNdotL = saturate(dot(n, light.direction));
-        color += albedo * light.color * (light.distanceAttenuation * light.shadowAttenuation * addNdotL);
+        color += albedo * light.color * (light.distanceAttenuation * light.shadowAttenuation * addNdotL) * diffuseBoost;
     }
 #endif
 
@@ -314,7 +328,7 @@ Varyings ShellFurGpuVert(Attributes input)
     output.normalWS = nSmoothWS;
     float2 uv = float2(sv.u, sv.v);
     output.uv = TRANSFORM_TEX(uv, _BaseMap);
-    output.furUV = TRANSFORM_TEX(uv, _FurMap);
+    output.furUV = ApplyFurUvBend(TRANSFORM_TEX(uv, _FurMap), layer);
     output.layer = layer;
     output.fogFactor = ComputeFogFactor(output.positionCS.z);
     // |δ_current − δ_hangRest| for tip strain emission (understanding A)
@@ -389,7 +403,7 @@ ShadowVaryings ShellFurGpuShadowVert(ShadowAttributes input)
 #else
     output.positionCS.z = max(output.positionCS.z, UNITY_NEAR_CLIP_VALUE);
 #endif
-    output.furUV = TRANSFORM_TEX(float2(sv.u, sv.v), _FurMap);
+    output.furUV = ApplyFurUvBend(TRANSFORM_TEX(float2(sv.u, sv.v), _FurMap), layer);
     output.layer = layer;
     return output;
 }

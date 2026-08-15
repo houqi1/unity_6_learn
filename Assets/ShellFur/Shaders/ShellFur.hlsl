@@ -37,6 +37,7 @@ CBUFFER_START(UnityPerMaterial)
     float  _Occlusion;
     float  _AlphaCutoff;
     float  _TipAlphaCutoff;
+    float4 _UVOffset;
     float  _ShellCount;
     float  _ShellLayerOffset;
     float  _FurLength;
@@ -48,6 +49,8 @@ CBUFFER_START(UnityPerMaterial)
     float  _RimPower;
     float  _RimStrength;
     float  _ShadowStrength;
+    float  _DiffuseBoostMin;
+    float  _DiffuseBoostMax;
     float4 _CustomLightDir;
     float  _FinSilhouetteSharpness;
     float  _FinExtrudeWeight;
@@ -121,6 +124,16 @@ float GetShellLayer(uint instanceId)
     float idx = (float)instanceId + max(_ShellLayerOffset, 0.0);
     // Layer 0 sits on the surface; last layer is near the tip.
     return saturate(idx / max(count - 1.0, 1.0));
+}
+
+float2 ApplyFurUvBend(float2 furUV, float layer)
+{
+#if defined(_USE_UV_BEND)
+    // FUR_OFFSET = layer. Offset grows toward the tip: dir * pow(h, power) * 0.1
+    float2 uvOffset = _UVOffset.xy * pow(saturate(layer), max(_UVOffset.z, 1e-4)) * 0.1;
+    furUV += uvOffset;
+#endif
+    return furUV;
 }
 
 // Decode object-space unit normal stored in vertex color (RGB = n * 0.5 + 0.5).
@@ -281,6 +294,10 @@ half3 ShadeShellFur(float3 positionWS, float3 normalWS, float2 uv, float layer, 
     }
 #endif
 
+#if !defined(SHELL_FUR_FIN)
+    lambert *= lerp(_DiffuseBoostMin, _DiffuseBoostMax, layer01);
+#endif
+
     // Debug: pure Lambert only (Σ lightColor * atten * saturate(N·L)). No albedo/AO/ambient/rim/spec.
 #if defined(_DEBUG_DIFFUSE)
     return lambert;
@@ -378,7 +395,7 @@ Varyings ShellFurVert(Attributes input)
     output.positionWS = posInputs.positionWS;
     output.normalWS   = normalWS;
     output.uv         = TRANSFORM_TEX(input.uv, _BaseMap);
-    output.furUV      = TRANSFORM_TEX(input.uv, _FurMap);
+    output.furUV      = ApplyFurUvBend(TRANSFORM_TEX(input.uv, _FurMap), layer);
     output.layer      = layer;
     output.fogFactor  = ComputeFogFactor(posInputs.positionCS.z);
     return output;
@@ -461,7 +478,7 @@ ShadowVaryings ShellFurShadowVert(ShadowAttributes input)
     output.positionCS.z = max(output.positionCS.z, UNITY_NEAR_CLIP_VALUE);
 #endif
 
-    output.furUV = TRANSFORM_TEX(input.uv, _FurMap);
+    output.furUV = ApplyFurUvBend(TRANSFORM_TEX(input.uv, _FurMap), layer);
     output.layer = layer;
     return output;
 }
@@ -516,7 +533,7 @@ DepthVaryings ShellFurDepthVert(DepthAttributes input)
     float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
 
     output.positionCS = TransformObjectToHClip(posOS);
-    output.furUV = TRANSFORM_TEX(input.uv, _FurMap);
+    output.furUV = ApplyFurUvBend(TRANSFORM_TEX(input.uv, _FurMap), layer);
     output.layer = layer;
     return output;
 }

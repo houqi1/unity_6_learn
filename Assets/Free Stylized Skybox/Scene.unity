@@ -1006,15 +1006,23 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 3937873841914257824, guid: bd29a6db4ea11ce44a08ba55c13b079a, type: 3}
       propertyPath: furLength
-      value: 0.16
+      value: 0.17
+      objectReference: {fileID: 0}
+    - target: {fileID: 3937873841914257824, guid: bd29a6db4ea11ce44a08ba55c13b079a, type: 3}
+      propertyPath: shellCount
+      value: 128
+      objectReference: {fileID: 0}
+    - target: {fileID: 3937873841914257824, guid: bd29a6db4ea11ce44a08ba55c13b079a, type: 3}
+      propertyPath: gravityPower
+      value: 1.41
       objectReference: {fileID: 0}
     - target: {fileID: 3937873841914257824, guid: bd29a6db4ea11ce44a08ba55c13b079a, type: 3}
       propertyPath: gravityStrength
-      value: 1.36
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3937873841914257824, guid: bd29a6db4ea11ce44a08ba55c13b079a, type: 3}
       propertyPath: dynamics.enabled
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3947592893510411686, guid: bd29a6db4ea11ce44a08ba55c13b079a, type: 3}
       propertyPath: m_Name

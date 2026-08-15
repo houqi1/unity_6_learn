@@ -11,7 +11,12 @@ Material:
   m_Shader: {fileID: 4800000, guid: ab54417d7c7645deb721e6458a3c22a6, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
-  m_ValidKeywords: []
+  m_ValidKeywords:
+  - _OCCLUSION_TO_BASECOLOR
+  - _OPAQUE_OUTPUT_ALPHA
+  - _SKIP_SOFT_ALPHA_CLIP
+  - _USE_TIP_ALPHA_CUTOFF
+  - _USE_UV_BEND
   m_InvalidKeywords: []
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 1
@@ -28,16 +33,18 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _FurMap:
-        m_Texture: {fileID: 2800000, guid: bbbebb6c8cdd40546a78a5257c154b67, type: 3}
-        m_Scale: {x: 1, y: 1}
+        m_Texture: {fileID: 2800000, guid: 85e1854aeddd2f44c80220f3f660ffde, type: 3}
+        m_Scale: {x: 14, y: 10}
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _AlphaCutoff: 0.296
+    - _AlphaCutoff: 0
     - _Cull: 2
     - _DebugDiffuse: 0
     - _DebugNormals: 0
     - _Density: 125
+    - _DiffuseBoostMax: 2.46
+    - _DiffuseBoostMin: 1.12
     - _FinBandStrength: 0.4
     - _FinExtrudeWeight: 1
     - _FinLengthScale: 1
@@ -55,25 +62,27 @@ Material:
     - _Gravity: 0.54
     - _GravityPower: 2
     - _Occlusion: 1
-    - _OcclusionToBaseColor: 0
-    - _OpaqueOutputAlpha: 0
-    - _SkipSoftAlphaClip: 0
-    - _UseTipAlphaCutoff: 0
+    - _OcclusionToBaseColor: 1
+    - _OpaqueOutputAlpha: 1
     - _RimPower: 4.91
     - _RimStrength: 2.29
     - _ShadowStrength: 0
     - _ShellCount: 32
+    - _SkipSoftAlphaClip: 1
     - _Smoothness: 0.234
     - _Thickness: 0.509
-    - _TipAlphaCutoff: 0.884
+    - _TipAlphaCutoff: 1
     - _UseCustomLightDir: 0
     - _UseKajiyaKay: 0
     - _UseProcedural: 0
     - _UseSmoothNormalsVC: 0
+    - _UseTipAlphaCutoff: 1
+    - _UseUvBend: 1
     m_Colors:
     - _BaseColor: {r: 0.78867924, g: 0.53937143, b: 0.27826983, a: 1}
     - _CustomLightDir: {r: 0.4, g: 0.8, b: -0.45, a: 0}
     - _GravityDir: {r: 0, g: -1, b: 0, a: 0}
     - _TipColor: {r: 0.9, g: 0.72, b: 0.45, a: 1}
+    - _UVOffset: {r: 0.21, g: 8.17, b: 2, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

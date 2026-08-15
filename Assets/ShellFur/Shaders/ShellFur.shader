@@ -19,6 +19,8 @@ Shader "Custom/ShellFur"
         [Toggle(_SKIP_SOFT_ALPHA_CLIP)] _SkipSoftAlphaClip ("Skip Soft Alpha Clip", Float) = 0
         [Toggle(_OPAQUE_OUTPUT_ALPHA)] _OpaqueOutputAlpha ("Output Opaque Alpha", Float) = 0
         [Toggle(_OCCLUSION_TO_BASECOLOR)] _OcclusionToBaseColor ("Occlusion To Base Color", Float) = 0
+        [Toggle(_USE_UV_BEND)] _UseUvBend ("UV Offset Bend", Float) = 0
+        _UVOffset ("UV Bend (XY Dir, Z Power)", Vector) = (1, 0, 2, 0)
 
         [Header(Shell Shape)]
         _ShellCount ("Shell Count (synced by script)", Float) = 32
@@ -51,6 +53,8 @@ Shader "Custom/ShellFur"
         _RimPower ("Rim Power", Range(0.5, 8)) = 2.5
         _RimStrength ("Rim Strength", Range(0, 10)) = 0.25
         _ShadowStrength ("Self Shadow", Range(0, 10)) = 0.35
+        _DiffuseBoostMin ("Diffuse Boost Min (Root)", Range(0, 8)) = 1
+        _DiffuseBoostMax ("Diffuse Boost Max (Tip)", Range(0, 8)) = 1
         [Toggle(_USE_CUSTOM_LIGHT_DIR)] _UseCustomLightDir ("Use Custom Light Direction", Float) = 0
         _CustomLightDir ("Custom Light Direction (WS)", Vector) = (0.35, 0.8, -0.45, 0)
         [Toggle(_DEBUG_DIFFUSE)] _DebugDiffuse ("Output Lambert Only", Float) = 0
@@ -99,6 +103,7 @@ Shader "Custom/ShellFur"
             #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
             #pragma shader_feature_local _OPAQUE_OUTPUT_ALPHA
             #pragma shader_feature_local _OCCLUSION_TO_BASECOLOR
+            #pragma shader_feature_local _USE_UV_BEND
             #pragma shader_feature_local _USE_KAJIYA_KAY
             #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
             #pragma shader_feature_local _USE_CUSTOM_LIGHT_DIR
@@ -132,6 +137,7 @@ Shader "Custom/ShellFur"
             #pragma shader_feature_local _USE_PROCEDURAL
             #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
             #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
+            #pragma shader_feature_local _USE_UV_BEND
             #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
 
             #include "ShellFur.hlsl"
@@ -159,6 +165,7 @@ Shader "Custom/ShellFur"
             #pragma shader_feature_local _USE_PROCEDURAL
             #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
             #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
+            #pragma shader_feature_local _USE_UV_BEND
             #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
 
             #include "ShellFur.hlsl"

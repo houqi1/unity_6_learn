@@ -19,6 +19,8 @@ Shader "Custom/ShellFurGpuSkinned"
         [Toggle(_SKIP_SOFT_ALPHA_CLIP)] _SkipSoftAlphaClip ("Skip Soft Alpha Clip", Float) = 0
         [Toggle(_OPAQUE_OUTPUT_ALPHA)] _OpaqueOutputAlpha ("Output Opaque Alpha", Float) = 0
         [Toggle(_OCCLUSION_TO_BASECOLOR)] _OcclusionToBaseColor ("Occlusion To Base Color", Float) = 0
+        [Toggle(_USE_UV_BEND)] _UseUvBend ("UV Offset Bend", Float) = 0
+        _UVOffset ("UV Bend (XY Dir, Z Power)", Vector) = (1, 0, 2, 0)
 
         [Header(Shell Shape)]
         _ShellCount ("Shell Count", Float) = 32
@@ -37,6 +39,8 @@ Shader "Custom/ShellFurGpuSkinned"
         _RimPower ("Rim Power", Range(0.5, 8)) = 2.5
         _RimStrength ("Rim Strength", Range(0, 10)) = 0.25
         _ShadowStrength ("Self Shadow", Range(0, 10)) = 0.35
+        _DiffuseBoostMin ("Diffuse Boost Min (Root)", Range(0, 8)) = 1
+        _DiffuseBoostMax ("Diffuse Boost Max (Tip)", Range(0, 8)) = 1
 
         [Header(Tip Strain Emission)]
         [Toggle] _StrainEmissionEnable ("Enable Strain Emission", Float) = 1
@@ -88,6 +92,7 @@ Shader "Custom/ShellFurGpuSkinned"
             #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
             #pragma shader_feature_local _OPAQUE_OUTPUT_ALPHA
             #pragma shader_feature_local _OCCLUSION_TO_BASECOLOR
+            #pragma shader_feature_local _USE_UV_BEND
             #pragma shader_feature_local _USE_KAJIYA_KAY
 
             #include "ShellFurGpuSkinning.hlsl"
@@ -114,6 +119,7 @@ Shader "Custom/ShellFurGpuSkinned"
             #pragma shader_feature_local _USE_PROCEDURAL
             #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
             #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
+            #pragma shader_feature_local _USE_UV_BEND
 
             #include "ShellFurGpuSkinning.hlsl"
             ENDHLSL
