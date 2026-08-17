@@ -9,7 +9,7 @@ using UnityEngine.Rendering;
 /// </summary>
 public sealed class ShellFurLocalGrassGuides : IDisposable
 {
-    public const int MaxGuides = 32;
+    public const int MaxGuides = 512;
     public const int MaxNodes = ShellFurDynamics.MaxNodes; // 17
 
     static readonly int GuideChainsId = Shader.PropertyToID("_GuideChains");

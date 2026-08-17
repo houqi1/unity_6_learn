@@ -119,6 +119,180 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!1001 &309025448
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 52.593
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 44.987
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -11.83
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: -7822392416710619451, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: 'm_Materials.Array.data[1]'
+      value: 
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      propertyPath: m_Name
+      value: SpiritBlossomAhri_FullAnims
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 309025451}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 309025450}
+  m_SourcePrefab: {fileID: 100100000, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+--- !u!1 &309025449 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: 7f8445e6a660698438254f35ce28e38b, type: 3}
+  m_PrefabInstance: {fileID: 309025448}
+  m_PrefabAsset: {fileID: 0}
+--- !u!95 &309025450
+Animator:
+  serializedVersion: 7
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 309025449}
+  m_Enabled: 1
+  m_Avatar: {fileID: 0}
+  m_Controller: {fileID: 0}
+  m_CullingMode: 0
+  m_UpdateMode: 0
+  m_ApplyRootMotion: 0
+  m_LinearVelocityBlending: 0
+  m_StabilizeFeet: 0
+  m_AnimatePhysics: 0
+  m_WarningMessage: 
+  m_HasTransformHierarchy: 1
+  m_AllowConstantClipSamplingOptimization: 1
+  m_KeepAnimatorStateOnDisable: 0
+  m_WriteDefaultValuesOnDisable: 0
+--- !u!114 &309025451
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 309025449}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 654b123434b1f814b8476f3727fd47a2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  sourceSkinned: {fileID: 0}
+  bindFurMeshOverride: {fileID: 0}
+  furMaterial: {fileID: 2100000, guid: a80f02e2b7a739e43bab227255325c88, type: 2}
+  useMaterialSlotOnly: 1
+  furMaterialSlots: 0100000002000000
+  hideSourceFurSlots: 1
+  hideBaseMesh: 0
+  shellCount: 24
+  furLength: 0.06
+  smoothNormalMaxAngle: 180
+  enableFins: 1
+  finsOnly: 0
+  finSegments: 6
+  finExtrudeWeight: 1
+  finSilhouetteSharpness: 8
+  finSilhouetteBias: 0
+  finSilhouettePower: 0.38
+  finBandStrength: 0.4
+  finRootOffset: 0.0016
+  finLengthScale: 0.919
+  finMinSilhouette: 0.001
+  finSkipCoplanarDot: 0.9998
+  finRootOpacity: 1
+  finTipOpacity: 0.053
+  finOpacityFadeStart: 0
+  finOpacityFadeEnd: 1
+  finOpacityPower: 1.65
+  finCastShadows: 1
+  finMaterialOverride: {fileID: 0}
+  gravityStrength: 0.5
+  gravityDirection: {x: 0, y: -1, z: 0}
+  gravityPower: 2
+  dynamics:
+    enabled: 1
+    mode: 3
+    nodeCount: 5
+    guideChainLength: 0.7
+    lengthScale: 1.25
+    guideOffsetScale: 0.06
+    particleGravity: 9.81
+    gravityAsRestPose: 0
+    teleportDistance: 2
+    followTension: 0.1
+    followTensionMin: 0.1
+    velocityDamping: 0.85
+    velocityDampingMin: 0.8
+    nodeMass: 0.15
+    maxStretchLength: 0.12
+    grassStiffness: 0.05
+    grassTipSoftness: 0.5
+    grassWindStrength: 0
+    grassWindSpeed: 1.2
+    boneStiffness: 0.1
+    boneDamping: 0.7
+    bendStiffness: 12
+    verletDamping: 0.12
+    verletIterations: 8
+    showGuideChain: 0
+    guideChainColor: {r: 0.2, g: 1, b: 1, a: 1}
+    guideNodeRadius: 0.008
+  dynamicsResolution: 1
+  localGuideCount: 16
+  shadowCasting: 1
+  receiveShadows: 1
+  drawInEditMode: 1
+  skinCompute: {fileID: 7200000, guid: 998385bab1d485d4d8e0c358c65a75e3, type: 3}
+  finCompute: {fileID: 7200000, guid: b0e13829aa17045428a8953280e4a796, type: 3}
+  logOnce: 0
 --- !u!1001 &812627941
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -146,6 +320,10 @@ PrefabInstance:
     - target: {fileID: 7194303139941238013, guid: 6ba5bdf966ae8854c8da259daf697860, type: 3}
       propertyPath: m_Name
       value: SpiritBlossomAhri
+      objectReference: {fileID: 0}
+    - target: {fileID: 7194303139941238013, guid: 6ba5bdf966ae8854c8da259daf697860, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7538071649973476935, guid: 6ba5bdf966ae8854c8da259daf697860, type: 3}
       propertyPath: m_LocalPosition.x
@@ -412,3 +590,4 @@ SceneRoots:
   - {fileID: 1651479809}
   - {fileID: 1990346282}
   - {fileID: 812627941}
+  - {fileID: 309025448}
