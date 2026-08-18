@@ -6,7 +6,7 @@ using UnityEngine.Rendering;
 /// Builds multi-segment fin strips from source mesh edges (scheme 3).
 /// Each manifold edge becomes a height stack of quads (segments along the strand).
 /// Runtime VS extrudes each row by UV3.x height and applies gravity ∝ h² so the strip droops as a curve.
-/// UV1 = face normal A, UV2 = face normal B, UV3.x = height 0..1.
+/// UV1 = face normal A, UV2 = face normal B, UV3.x = height 0..1, UV3.y = source vertex id.
 /// </summary>
 public static class ShellFurFinBuilder
 {
@@ -190,8 +190,9 @@ public static class ShellFurFinBuilder
                 finUV2.Add(nB);
                 finUV2.Add(nB);
 
-                finUV3.Add(new Vector2(h, 0f));
-                finUV3.Add(new Vector2(h, 0f));
+                // UV3.x = height 0..1; UV3.y = source mesh vertex id (per-vertex PBD).
+                finUV3.Add(new Vector2(h, e.v0));
+                finUV3.Add(new Vector2(h, e.v1));
             }
 
             // Stacked quads between consecutive height rows.

@@ -132,14 +132,14 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand)")]
-    [Tooltip("Spring / Verlet / Grass / Bone. Shell = pure extrude + chain δ (no GravityBend while chain on).")]
+    [Tooltip("Spring / Verlet / Grass / Bone / PBD. Shell = pure extrude + chain δ (no GravityBend while chain on). LocalGuides: Grass hang or PBD stand-along-normal.")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     public enum DynamicsResolution
     {
         /// <summary>Single chain anchored at SMR / object origin (legacy).</summary>
         GlobalChain = 0,
-        /// <summary>Sparse Grass guides on skinned surface; per-vertex blend of 3 nearest.</summary>
+        /// <summary>Sparse local guides on skinned surface; per-vertex blend of 3 nearest. Grass or PBD.</summary>
         LocalGuides = 1
     }
 
@@ -277,7 +277,8 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         else
         {
             Transform t = _smr != null ? _smr.transform : transform;
-            dynamics.Evaluate(t.position, gDir, furLength, dt, gravityStrength, gravityPower);
+            Vector3 erect = dynamics.mode == ShellFurDynamics.Mode.Pbd ? t.up : default;
+            dynamics.Evaluate(t.position, gDir, furLength, dt, gravityStrength, gravityPower, erect);
         }
 
         _dynamicsStepFrame = frame;

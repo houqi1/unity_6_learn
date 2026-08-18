@@ -73,7 +73,7 @@ Shader "Custom/ShellFurFin"
             Blend SrcAlpha OneMinusSrcAlpha
 
             HLSLPROGRAM
-            #pragma target 3.5
+            #pragma target 4.5
             #pragma vertex ShellFurFinVert
             #pragma fragment ShellFurFinFrag
 
@@ -102,7 +102,7 @@ Shader "Custom/ShellFurFin"
             Cull [_Cull]
 
             HLSLPROGRAM
-            #pragma target 3.5
+            #pragma target 4.5
             #pragma vertex ShellFurFinShadowVert
             #pragma fragment ShellFurFinShadowFrag
 

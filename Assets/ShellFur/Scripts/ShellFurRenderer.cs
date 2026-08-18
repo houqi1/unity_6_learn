@@ -123,7 +123,7 @@ public class ShellFurRenderer : MonoBehaviour
     [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand: root pinned to object)")]
-    [Tooltip("Root pinned to object. Modes: Spring / Verlet / Grass / Bone (MaxScript tip spring). Shell = pure extrude + chain δ (no GravityBend while chain on).")]
+    [Tooltip("Spring / Verlet / Grass / Bone = one global guide. PBD = one chain per mesh vertex (HTML: shape-memory + stretch/LRA, shells follow a cubic Bezier). Mesh must be Read/Write. Node Count 2 uses 4 particles.")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     [Header("Rendering")]
@@ -163,6 +163,11 @@ public class ShellFurRenderer : MonoBehaviour
     bool _loggedSkinnedNoFins;
     bool _dynamicsSteppedThisFrame;
     int _dynamicsStepFrame = -1;
+    ShellFurVertexPbd _vertexPbd;
+    bool _loggedVertexPbdFail;
+
+    bool UseVertexPbd =>
+        dynamics != null && dynamics.enabled && dynamics.mode == ShellFurDynamics.Mode.Pbd;
 
     public int ShellCount
     {
@@ -333,6 +338,7 @@ public class ShellFurRenderer : MonoBehaviour
         RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
         RestoreSourceRendererState();
         dynamics?.ResetState();
+        _vertexPbd?.ResetChains();
         _dynamicsSteppedThisFrame = false;
         _dynamicsStepFrame = -1;
     }
@@ -340,9 +346,16 @@ public class ShellFurRenderer : MonoBehaviour
     void LateUpdate()
     {
         dynamics?.ValidateNodeCount();
+        if (UseVertexPbd && IsSkinned)
+            PrepareSkinnedPoseIfNeeded();
         StepDynamicsIfNeeded();
         if (dynamics != null && dynamics.showGuideChain && Application.isPlaying)
-            dynamics.DrawGuideChainDebugLines();
+        {
+            if (UseVertexPbd)
+                _vertexPbd?.DrawGuideChainDebugLines();
+            else
+                dynamics.DrawGuideChainDebugLines();
+        }
     }
 
     void StepDynamicsIfNeeded()
@@ -359,11 +372,60 @@ public class ShellFurRenderer : MonoBehaviour
             dt = 1f / 60f;
 
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-6f ? gravityDirection.normalized : Vector3.down;
-        Vector3 anchor = _skinned != null ? _skinned.transform.position : transform.position;
 
-        dynamics.Evaluate(anchor, gDir, furLength, dt, gravityStrength, gravityPower);
+        if (UseVertexPbd)
+        {
+            EnsureVertexPbd();
+            if (_vertexPbd != null && _vertexPbd.IsReady)
+            {
+                if (IsSkinned)
+                    _vertexPbd.RefreshBindPose(ActiveDrawMesh, useSmoothNormalsFromVertexColor);
+                _vertexPbd.Step(DrawLocalToWorld, dynamics, furLength, dt, gDir);
+            }
+        }
+        else
+        {
+            Transform t = _skinned != null ? _skinned.transform : transform;
+            dynamics.Evaluate(t.position, gDir, furLength, dt, gravityStrength, gravityPower);
+        }
+
         _dynamicsStepFrame = frame;
         _dynamicsSteppedThisFrame = true;
+    }
+
+    int VertexPbdNodeCount
+    {
+        get
+        {
+            int n = dynamics != null ? dynamics.nodeCount : ShellFurVertexPbd.DefaultParticles;
+            if (n <= 2)
+                return ShellFurVertexPbd.DefaultParticles;
+            return Mathf.Clamp(n, ShellFurVertexPbd.MinParticles, ShellFurVertexPbd.MaxParticles);
+        }
+    }
+
+    void EnsureVertexPbd()
+    {
+        Mesh mesh = ActiveDrawMesh;
+        if (mesh == null)
+            return;
+
+        if (_vertexPbd == null)
+            _vertexPbd = new ShellFurVertexPbd();
+
+        if (_vertexPbd.Matches(mesh, VertexPbdNodeCount, useSmoothNormalsFromVertexColor))
+            return;
+
+        if (!_vertexPbd.Build(mesh, VertexPbdNodeCount, useSmoothNormalsFromVertexColor))
+        {
+            if (!_loggedVertexPbdFail)
+            {
+                Debug.LogWarning(
+                    $"[{nameof(ShellFurRenderer)}] Per-vertex PBD failed on '{name}'. Enable Read/Write on the mesh.",
+                    this);
+                _loggedVertexPbdFail = true;
+            }
+        }
     }
 
     void OnDrawGizmos()
@@ -373,7 +435,10 @@ public class ShellFurRenderer : MonoBehaviour
         // Keep chain up to date in edit mode when gizmos refresh.
         if (!Application.isPlaying)
             StepDynamicsIfNeeded();
-        dynamics.DrawGuideChainGizmos();
+        if (UseVertexPbd)
+            _vertexPbd?.DrawGuideChainGizmos();
+        else
+            dynamics.DrawGuideChainGizmos();
     }
 
     void OnDestroy()
@@ -387,6 +452,8 @@ public class ShellFurRenderer : MonoBehaviour
         _runtimeFinMesh = null;
         DestroyOwned(_bakedMesh);
         _bakedMesh = null;
+        _vertexPbd?.Dispose();
+        _vertexPbd = null;
     }
 
     void OnValidate()
@@ -736,19 +803,30 @@ public class ShellFurRenderer : MonoBehaviour
                 StepDynamicsIfNeeded();
         }
 
-        bool useChain = dynamics != null && dynamics.enabled && dynamics.HasSamples;
-        if (useChain)
+        bool vertexPbd = UseVertexPbd && _vertexPbd != null && _vertexPbd.IsReady;
+        if (vertexPbd)
         {
-            _mpb.SetFloat(UseFurChainId, 1f);
-            _mpb.SetFloat(FurChainCountId, dynamics.SampleCount);
-            _mpb.SetVectorArray(FurChainId, dynamics.BendSamples);
-            Vector3 erect = dynamics.ErectDirection;
-            _mpb.SetVector(FurChainErectId, new Vector4(erect.x, erect.y, erect.z, 0f));
+            _vertexPbd.BindMpb(_mpb);
+            _mpb.SetFloat(UseFurChainId, 0f);
+            _mpb.SetFloat(FurChainCountId, 0f);
         }
         else
         {
-            _mpb.SetFloat(UseFurChainId, 0f);
-            _mpb.SetFloat(FurChainCountId, 0f);
+            ShellFurVertexPbd.BindDisabledMpb(_mpb);
+            bool useChain = dynamics != null && dynamics.enabled && dynamics.HasSamples;
+            if (useChain)
+            {
+                _mpb.SetFloat(UseFurChainId, 1f);
+                _mpb.SetFloat(FurChainCountId, dynamics.SampleCount);
+                _mpb.SetVectorArray(FurChainId, dynamics.BendSamples);
+                Vector3 erect = dynamics.ErectDirection;
+                _mpb.SetVector(FurChainErectId, new Vector4(erect.x, erect.y, erect.z, 0f));
+            }
+            else
+            {
+                _mpb.SetFloat(UseFurChainId, 0f);
+                _mpb.SetFloat(FurChainCountId, 0f);
+            }
         }
     }
 

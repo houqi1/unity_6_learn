@@ -88,7 +88,7 @@ Shader "Custom/ShellFur"
             AlphaToMask On
 
             HLSLPROGRAM
-            #pragma target 3.5
+            #pragma target 4.5
             #pragma vertex ShellFurVert
             #pragma fragment ShellFurFrag
 
@@ -128,7 +128,7 @@ Shader "Custom/ShellFur"
             Cull [_Cull]
 
             HLSLPROGRAM
-            #pragma target 3.5
+            #pragma target 4.5
             #pragma vertex ShellFurShadowVert
             #pragma fragment ShellFurShadowFrag
 
@@ -157,7 +157,7 @@ Shader "Custom/ShellFur"
             Cull [_Cull]
 
             HLSLPROGRAM
-            #pragma target 3.5
+            #pragma target 4.5
             #pragma vertex ShellFurDepthVert
             #pragma fragment ShellFurDepthFrag
 

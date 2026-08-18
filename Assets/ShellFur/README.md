@@ -24,12 +24,13 @@ URP shell-fur implementation for Unity 6. Multiple transparent-cutout **shell la
 | Strand Density | Procedural grid frequency |
 | Thickness | Strand radius / taper base |
 | Gravity (static) | Only when Dynamics **off**: `pow(layer, GravityPower)` formula droop |
-| Dynamics | Spring / Verlet / **Grass** / **Bone**. Shell = **pure extrude** + chain δ (shader skips GravityBend while chain on) |
+| Dynamics | Spring / Verlet / **Grass** / **Bone** / **PBD**. Shell = **pure extrude** + chain δ (shader skips GravityBend while chain on) |
 | Guide Chain Length | **Sim only**: root→tip length (world). Affects lag / displacement sensitivity. **0** = Fur Length × Length Scale |
 | Length Scale | Used only when Guide Chain Length is 0 (sim length) |
 | Guide Offset Scale | **Shell response** (decoupled): δ = ((chainPos−root)/chainLen) × scale. Not tied to sim length |
 | Mode → Grass | HTML Interactive Grass: fixed segment length + hang stiffness |
 | Mode → Bone | MaxScript bone chain: rigid FK gravity rest tip + tip spring-damper + hard length (rotate only). Shell pack same as Grass |
+| Mode → PBD | **Per-vertex** HTML chains on `ShellFurRenderer` (root on surface, gravity/wind + shape-memory, stretch + LRA). Shells follow a cubic Bezier. Mesh must be Read/Write. Node Count 2 → 4 particles |
 | Grass Stiffness | Recover speed toward hang ideal (~0.01–0.25 like the HTML slider) |
 | Bone Stiffness / Damping | HTML `_stiffness` / `_damping` (per 1/60s; defaults 0.1 / 0.7) |
 | Gravity As Rest Pose | Spring/Verlet only. ON: rest = static gravity shell pose; OFF: live g / chase previous. **Ignored in Grass/Bone** |
@@ -87,7 +88,7 @@ Static-mesh fins on **`ShellFurRenderer`** are unchanged (CPU fin mesh + VS silh
 9. **Local Grass guides (animation sway):**
    - Enable **Dynamics**
    - **Dynamics Resolution** = `LocalGuides` (default)
-   - Mode is forced to **Grass** for each guide (hang ideal = gravity)
+   - Mode **Grass** (default) or **PBD** (stand along skinned normal + wind/spring)
    - **Local Guide Count** ≈ 12–16
    - Tune Grass Stiffness / Tip Softness / Guide Offset Scale
    - Optional: **Show Guide Chain** to debug all guide strands

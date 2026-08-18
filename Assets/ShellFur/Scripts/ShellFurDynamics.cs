@@ -2,7 +2,7 @@ using UnityEngine;
 
 /// <summary>
 /// Guide-strand dynamics for shell fur.
-/// Spring / Verlet / Grass / Bone = different chain sims.
+/// Spring / Verlet / Grass / Bone / PBD = different chain sims.
 /// Sim uses real chain length (displacement sensitivity only).
 /// Shell pack: δ̂ = (chainPos − root) / chainLen, then δ = δ̂ * guideOffsetScale
 /// (shape normalized so length no longer couples into shell amplitude).
@@ -27,7 +27,13 @@ public class ShellFurDynamics
         /// target, tip velocity spring-damper, hard length constraint (rotate only).
         /// Shell pack same as Grass (pure extrude + chain δ).
         /// </summary>
-        Bone = 3
+        Bone = 3,
+        /// <summary>
+        /// Shell-fur HTML PBD. On ShellFurRenderer this is one chain per mesh vertex
+        /// (root pinned to the surface; shells sample a cubic Bezier). GPU-skin path
+        /// still uses a sparse/global guide. Recommend 4 nodes (2 is promoted to 4).
+        /// </summary>
+        Pbd = 4
     }
 
     public const int MaxNodes = 17;
@@ -38,11 +44,14 @@ public class ShellFurDynamics
     const float FixedStep = 1f / 60f;
     const int MaxSubstepsVerlet = 8;
     const int MaxSubstepsBone = 8;
+    const int MaxSubstepsPbd = 4;
+    const float PbdMaxSpeed = 30f;
+    const float PbdSpringScale = 250f;
 
     [Tooltip("Enable guide-strand dynamics.")]
     public bool enabled;
 
-    [Tooltip("Spring = follow spring. Verlet = rope. Grass = HTML hang. Bone = MaxScript tip spring-damper (gravity rest).")]
+    [Tooltip("Spring = follow spring. Verlet = rope. Grass = HTML hang. Bone = MaxScript tip spring-damper. PBD = per-vertex HTML chains on ShellFurRenderer (recommend 4 nodes).")]
     public Mode mode = Mode.Spring;
 
     [Header("Chain")]
@@ -70,7 +79,7 @@ public class ShellFurDynamics
     [Min(0f)]
     public float guideOffsetScale = 1f;
 
-    [Tooltip("Gravity m/s² in force integration (Spring/Verlet only; ignored in Grass/Bone).")]
+    [Tooltip("Gravity m/s² in force integration (Spring/Verlet/PBD; ignored in Grass/Bone).")]
     [Min(0f)]
     public float particleGravity = 2f;
 
@@ -134,6 +143,39 @@ public class ShellFurDynamics
     [Range(0.5f, 0.99f)]
     public float boneDamping = 0.7f;
 
+    [Header("PBD (shell-fur HTML)")]
+    [Tooltip("Shape-memory spring (fur wants to stand along world erect / object up). Applied as force k = this × 250, not a projection.")]
+    [Range(0.02f, 0.95f)]
+    public float pbdStiffness = 0.22f;
+
+    [Tooltip("Exponential air damping: vel *= exp(-damping × dt). HTML default 2.2.")]
+    [Range(0f, 8f)]
+    public float pbdDamping = 2.2f;
+
+    [Tooltip("PBD gravity scale (tip-weighted). HTML droop default 3.")]
+    [Min(0f)]
+    public float pbdGravity = 3f;
+
+    [Tooltip("Hard-constraint iterations per substep (stretch + LRA).")]
+    [Range(2, 20)]
+    public int pbdIterations = 8;
+
+    [Tooltip("PBD substeps per frame. HTML default 2.")]
+    [Range(1, 4)]
+    public int pbdSubsteps = 2;
+
+    [Tooltip("Directional wind strength. 0 = off.")]
+    [Min(0f)]
+    public float pbdWindStrength = 3f;
+
+    [Tooltip("Wind turbulence relative to strength.")]
+    [Range(0f, 3f)]
+    public float pbdWindTurbulence = 1.4f;
+
+    [Tooltip("Horizontal wind direction in degrees (0 = +X, 90 = −Z).")]
+    [Range(-180f, 180f)]
+    public float pbdWindDirection = 25f;
+
     [Header("Verlet (optional)")]
     [Min(0f)]
     public float bendStiffness = 0f;
@@ -160,6 +202,7 @@ public class ShellFurDynamics
     Vector3 _erectDir = Vector3.up;
     float _chainLen;
     float _windTime;
+    float _simTime;
     Mode _lastMode;
     bool _lastEnabled;
     bool _lastGravityAsRestPose;
@@ -222,18 +265,23 @@ public class ShellFurDynamics
 
     /// <param name="shellGravityStrength">Renderer gravity strength (for rest-pose baking).</param>
     /// <param name="shellGravityPower">Renderer gravity falloff power (for rest-pose baking).</param>
+    /// <param name="worldErect">PBD stand-up axis (object up). Zero = −gravity.</param>
     public void Evaluate(
         Vector3 anchorPosition,
         Vector3 gravityDirection,
         float furLength,
         float deltaTime,
         float shellGravityStrength = 0.35f,
-        float shellGravityPower = 2f)
+        float shellGravityPower = 2f,
+        Vector3 worldErect = default)
     {
         Vector3 gDir = gravityDirection.sqrMagnitude > 1e-8f
             ? gravityDirection.normalized
             : Vector3.down;
-        _erectDir = (-gDir).normalized;
+        if (mode == Mode.Pbd && worldErect.sqrMagnitude > 1e-8f)
+            _erectDir = worldErect.normalized;
+        else
+            _erectDir = (-gDir).normalized;
 
         int nodes = Mathf.Clamp(nodeCount, MinNodes, MaxNodes);
         int segs = Mathf.Max(nodes - 1, 1);
@@ -317,6 +365,19 @@ public class ShellFurDynamics
                 steps++;
             }
         }
+        else if (mode == Mode.Pbd)
+        {
+            if (NeedsVerletSpacing(segLen))
+                InitChainSpaced(anchorPosition, _erectDir, nodes, segLen);
+
+            int sub = Mathf.Clamp(pbdSubsteps, 1, MaxSubstepsPbd);
+            float sdt = frameDt / sub;
+            for (int i = 0; i < sub; i++)
+            {
+                _simTime += sdt;
+                SubstepPbd(anchorPosition, gDir, _erectDir, segLen, sdt, _simTime);
+            }
+        }
         else
         {
             if (NeedsVerletSpacing(segLen))
@@ -346,6 +407,7 @@ public class ShellFurDynamics
         _nodeCount = 0;
         _lastEnabled = false;
         _windTime = 0f;
+        _simTime = 0f;
         _chainLen = 0f;
         for (int i = 0; i < MaxNodes; i++)
         {
@@ -369,6 +431,14 @@ public class ShellFurDynamics
         grassWindSpeed = Mathf.Max(0f, grassWindSpeed);
         boneStiffness = Mathf.Clamp(boneStiffness, 0.01f, 0.5f);
         boneDamping = Mathf.Clamp(boneDamping, 0.5f, 0.99f);
+        pbdStiffness = Mathf.Clamp(pbdStiffness, 0.02f, 0.95f);
+        pbdDamping = Mathf.Clamp(pbdDamping, 0f, 8f);
+        pbdGravity = Mathf.Max(0f, pbdGravity);
+        pbdIterations = Mathf.Clamp(pbdIterations, 2, 20);
+        pbdSubsteps = Mathf.Clamp(pbdSubsteps, 1, MaxSubstepsPbd);
+        pbdWindStrength = Mathf.Max(0f, pbdWindStrength);
+        pbdWindTurbulence = Mathf.Clamp(pbdWindTurbulence, 0f, 3f);
+        pbdWindDirection = Mathf.Clamp(pbdWindDirection, -180f, 180f);
         guideOffsetScale = Mathf.Max(0f, guideOffsetScale);
         guideChainLength = Mathf.Max(0f, guideChainLength);
         lengthScale = Mathf.Max(0.01f, lengthScale);
@@ -422,6 +492,8 @@ public class ShellFurDynamics
         float gPow)
     {
         if (mode == Mode.Grass)
+            InitChainSpaced(anchor, _erectDir, nodes, segLen);
+        else if (mode == Mode.Pbd)
             InitChainSpaced(anchor, _erectDir, nodes, segLen);
         else if (mode == Mode.Bone)
             // HTML: chain points down along gravity (rest pose).
@@ -572,6 +644,106 @@ public class ShellFurDynamics
 
         // Ensure root slot stays pinned after child writes (baseIdx never 0 here).
         _pos[0] = anchor;
+        _prev[0] = anchor;
+        _vel[0] = Vector3.zero;
+    }
+
+    /// <summary>
+    /// Shell-fur HTML PBD substep:
+    /// 1) pin root
+    /// 2) integrate free nodes: gravity × t, wind × t, shape-memory spring toward
+    ///    erect rest (force, not projection — projections swallow a·dt²)
+    /// 3) vel *= exp(-damping·dt), clamp speed
+    /// 4) project stretch (prev node) + long-range attachment (root)
+    /// 5) rebuild velocity from (pos − prev) / dt
+    /// </summary>
+    void SubstepPbd(
+        Vector3 anchor,
+        Vector3 gDir,
+        Vector3 erect,
+        float segLen,
+        float dt,
+        float time)
+    {
+        int n = _nodeCount;
+        if (n < 2)
+            return;
+
+        dt = Mathf.Clamp(dt, MinDt, MaxFrameDt);
+        segLen = Mathf.Max(segLen, 1e-5f);
+        if (erect.sqrMagnitude < 1e-8f)
+            erect = Vector3.up;
+        else
+            erect.Normalize();
+
+        float dampMul = Mathf.Exp(-Mathf.Max(0f, pbdDamping) * dt);
+        float kSpring = Mathf.Clamp(pbdStiffness, 0.02f, 0.95f) * PbdSpringScale;
+        float gScale = Mathf.Max(0f, pbdGravity);
+
+        float wDir = pbdWindDirection * Mathf.Deg2Rad;
+        float wxd = Mathf.Cos(wDir);
+        float wzd = -Mathf.Sin(wDir);
+        float wStr = Mathf.Max(0f, pbdWindStrength);
+        float wTurb = Mathf.Max(0f, pbdWindTurbulence) * wStr * 0.45f;
+
+        _pos[0] = anchor;
+        _vel[0] = Vector3.zero;
+
+        for (int k = 1; k < n; k++)
+        {
+            float t = k / (float)(n - 1);
+            Vector3 p = _pos[k];
+
+            float gust = 0.55f + 0.45f * Mathf.Sin(time * 2.1f + p.x * 0.9f + p.y * 0.7f);
+            Vector3 a;
+            a.x = wxd * wStr * gust * t + Mathf.Sin(time * 1.9f + p.y * 2.3f) * wTurb * t;
+            a.y = Mathf.Sin(time * 1.3f + p.x * 1.9f + p.z * 1.4f) * wTurb * 0.4f * t;
+            a.z = wzd * wStr * gust * t + Mathf.Cos(time * 1.6f + p.x * 2.1f) * wTurb * t;
+            a += gDir * (gScale * t);
+
+            // Underdamped spring toward stand-up rest along erect.
+            Vector3 rest = anchor + erect * (segLen * k);
+            a += (rest - p) * kSpring;
+
+            Vector3 v = (_vel[k] + a * dt) * dampMul;
+            float sp = v.magnitude;
+            if (sp > PbdMaxSpeed)
+                v *= PbdMaxSpeed / sp;
+
+            _vel[k] = v;
+            _prev[k] = p;
+            _pos[k] = p + v * dt;
+        }
+
+        int iters = Mathf.Clamp(pbdIterations, 2, 20);
+        for (int it = 0; it < iters; it++)
+        {
+            _pos[0] = anchor;
+            for (int k = 1; k < n; k++)
+            {
+                int j = k - 1;
+                float wa = k == 1 ? 0f : 1f;
+                Vector3 d = _pos[k] - _pos[j];
+                float dist = d.magnitude + 1e-9f;
+                float corr = (dist - segLen) / (dist * (wa + 1f));
+                if (wa > 0f)
+                    _pos[j] += d * corr;
+                _pos[k] -= d * corr;
+
+                // Long-range attachment: |x_k − root| ≤ k · rest
+                Vector3 toRoot = _pos[k] - anchor;
+                float dr = toRoot.magnitude;
+                float maxD = segLen * k;
+                if (dr > maxD && dr > 1e-12f)
+                    _pos[k] = anchor + toRoot * (maxD / dr);
+            }
+            _pos[0] = anchor;
+        }
+
+        float invDt = 1f / dt;
+        for (int k = 1; k < n; k++)
+            _vel[k] = (_pos[k] - _prev[k]) * invDt;
+
         _prev[0] = anchor;
         _vel[0] = Vector3.zero;
     }

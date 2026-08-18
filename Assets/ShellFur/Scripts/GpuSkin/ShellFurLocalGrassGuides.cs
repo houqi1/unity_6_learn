@@ -4,7 +4,8 @@ using UnityEngine.Rendering;
 
 /// <summary>
 /// Sparse local Grass guide strands for GPU-skin shell fur.
-/// Each guide is a ShellFurDynamics chain (forced Grass) anchored to a skinned surface point.
+/// Each guide is a ShellFurDynamics chain (Grass, or PBD if that mode is selected)
+/// anchored to a skinned surface point.
 /// Per-vertex δ is a blend of the 3 nearest guides (bind-pose distances).
 /// </summary>
 public sealed class ShellFurLocalGrassGuides : IDisposable
@@ -106,7 +107,7 @@ public sealed class ShellFurLocalGrassGuides : IDisposable
             var chain = new ShellFurDynamics();
             SyncSettings(settingsTemplate, chain);
             chain.enabled = true;
-            chain.mode = ShellFurDynamics.Mode.Grass;
+            chain.mode = ResolveLocalMode(settingsTemplate);
             chain.ResetState();
             _chains[i] = chain;
         }
@@ -137,7 +138,7 @@ public sealed class ShellFurLocalGrassGuides : IDisposable
     }
 
     /// <summary>
-    /// Skin guide anchors with the same LBS matrices as CSSkin, step Grass, upload chains.
+    /// Skin guide anchors with the same LBS matrices as CSSkin, step Grass/PBD, upload chains.
     /// </summary>
     public void StepAndUpload(
         Matrix4x4[] boneMatrices,
@@ -166,11 +167,14 @@ public sealed class ShellFurLocalGrassGuides : IDisposable
             var chain = _chains[g];
             SyncSettings(settingsTemplate, chain);
             chain.enabled = true;
-            chain.mode = ShellFurDynamics.Mode.Grass;
+            chain.mode = ResolveLocalMode(settingsTemplate);
 
             int vi = _guideVertIndices[g];
             Vector3 anchor = SkinBindVertex(_bindVerts[vi], boneMatrices, boneCount);
-            chain.Evaluate(anchor, gDir, furLength, dt, shellGravityStrength, shellGravityPower);
+            Vector3 erect = default;
+            if (chain.mode == ShellFurDynamics.Mode.Pbd)
+                erect = SkinBindDirection(_bindVerts[vi], boneMatrices, boneCount);
+            chain.Evaluate(anchor, gDir, furLength, dt, shellGravityStrength, shellGravityPower, erect);
 
             nodes = Mathf.Max(nodes, chain.SampleCount);
             PackGuideSamples(g, chain);
@@ -327,10 +331,25 @@ public sealed class ShellFurLocalGrassGuides : IDisposable
         dst.bendStiffness = src.bendStiffness;
         dst.verletDamping = src.verletDamping;
         dst.verletIterations = src.verletIterations;
+        dst.pbdStiffness = src.pbdStiffness;
+        dst.pbdDamping = src.pbdDamping;
+        dst.pbdGravity = src.pbdGravity;
+        dst.pbdIterations = src.pbdIterations;
+        dst.pbdSubsteps = src.pbdSubsteps;
+        dst.pbdWindStrength = src.pbdWindStrength;
+        dst.pbdWindTurbulence = src.pbdWindTurbulence;
+        dst.pbdWindDirection = src.pbdWindDirection;
         dst.showGuideChain = src.showGuideChain;
         dst.guideChainColor = src.guideChainColor;
         dst.guideNodeRadius = src.guideNodeRadius;
         dst.ValidateNodeCount();
+    }
+
+    static ShellFurDynamics.Mode ResolveLocalMode(ShellFurDynamics settings)
+    {
+        if (settings != null && settings.mode == ShellFurDynamics.Mode.Pbd)
+            return ShellFurDynamics.Mode.Pbd;
+        return ShellFurDynamics.Mode.Grass;
     }
 
     static void BuildWeights(
@@ -397,8 +416,31 @@ public sealed class ShellFurLocalGrassGuides : IDisposable
         Matrix4x4[] bones,
         int boneCount)
     {
+        Matrix4x4 M = BlendSkinMatrix(v, bones, boneCount);
+        return M.MultiplyPoint3x4(new Vector3(v.px, v.py, v.pz));
+    }
+
+    /// <summary>Skinned smooth (fallback mesh) normal in world space.</summary>
+    public static Vector3 SkinBindDirection(
+        ShellFurGpuSkinTypes.BindVertex v,
+        Matrix4x4[] bones,
+        int boneCount)
+    {
+        Vector3 n = new Vector3(v.sx, v.sy, v.sz);
+        if (n.sqrMagnitude < 1e-8f)
+            n = new Vector3(v.nx, v.ny, v.nz);
+        Matrix4x4 M = BlendSkinMatrix(v, bones, boneCount);
+        Vector3 wn = M.MultiplyVector(n);
+        return wn.sqrMagnitude > 1e-8f ? wn.normalized : Vector3.up;
+    }
+
+    static Matrix4x4 BlendSkinMatrix(
+        ShellFurGpuSkinTypes.BindVertex v,
+        Matrix4x4[] bones,
+        int boneCount)
+    {
         if (bones == null || boneCount <= 0)
-            return new Vector3(v.px, v.py, v.pz);
+            return Matrix4x4.identity;
 
         float w0 = v.w0, w1 = v.w1, w2 = v.w2, w3 = v.w3;
         float wSum = w0 + w1 + w2 + w3;
@@ -411,9 +453,8 @@ public sealed class ShellFurLocalGrassGuides : IDisposable
         any |= AccBone(ref M, bones, boneCount, w3, v.i3);
 
         if (!any || wSum < 1e-6f)
-            M = bones[0];
-
-        return M.MultiplyPoint3x4(new Vector3(v.px, v.py, v.pz));
+            return bones[0];
+        return M;
     }
 
     static bool AccBone(ref Matrix4x4 M, Matrix4x4[] bones, int boneCount, float w, float indexF)

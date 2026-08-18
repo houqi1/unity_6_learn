@@ -75,6 +75,25 @@ float  _FurChainCount;
 float  _UseFurChain;
 float4 _FurChainErect; // xyz = erect axis used by simulation (usually -gravity)
 
+// Per-vertex PBD (HTML): cubic Bezier handles d1,d2,d3 as world offsets from the vertex root.
+// Layout: _VertexPbdBezier[vid * 3 + {0,1,2}].
+StructuredBuffer<float4> _VertexPbdBezier;
+float _UseVertexPbd;
+float _VertexPbdCount;
+
+float3 SampleVertexPbdBezierWS(uint vertexId, float layer)
+{
+    uint vcount = (uint)max(_VertexPbdCount, 1.0);
+    uint vid = min(vertexId, vcount - 1u);
+    uint base = vid * 3u;
+    float t = saturate(layer);
+    float s = 1.0 - t;
+    float3 d1 = _VertexPbdBezier[base].xyz;
+    float3 d2 = _VertexPbdBezier[base + 1u].xyz;
+    float3 d3 = _VertexPbdBezier[base + 2u].xyz;
+    return 3.0 * s * s * t * d1 + 3.0 * s * t * t * d2 + t * t * t * d3;
+}
+
 float3 SampleFurChainOffsetWS(float layer)
 {
     int count = (int)clamp(_FurChainCount, 1.0, 17.0);
@@ -153,8 +172,17 @@ float3 ResolveExtrudeNormalOS(float3 meshNormalOS, float4 vertexColor)
 #endif
 }
 
-float3 ApplyShellDisplacement(float3 positionOS, float3 extrudeNormalOS, float layer)
+float3 ApplyShellDisplacement(float3 positionOS, float3 extrudeNormalOS, float layer, uint vertexId)
 {
+    // Per-vertex PBD: the chain *is* the hair (HTML cubic Bezier). Straight rest
+    // along the normal reproduces offset = n * furLength * t exactly.
+    if (_UseVertexPbd > 0.5)
+    {
+        float3 rootWS = TransformObjectToWorld(positionOS);
+        float3 offsetWS = SampleVertexPbdBezierWS(vertexId, layer);
+        return TransformWorldToObject(rootWS + offsetWS);
+    }
+
     // Classic shell base (always).
     float3 offset = normalize(extrudeNormalOS + 1e-5) * (layer * _FurLength);
 
@@ -350,6 +378,7 @@ struct Attributes
     float3 normalOS   : NORMAL;
     float4 color      : COLOR;
     float2 uv         : TEXCOORD0;
+    uint   vertexId   : SV_VertexID;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
 
@@ -381,7 +410,7 @@ Varyings ShellFurVert(Attributes input)
 
     float layer = GetShellLayer(id);
     float3 extrudeN = ResolveExtrudeNormalOS(input.normalOS, input.color);
-    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
+    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer, input.vertexId);
 
     VertexPositionInputs posInputs = GetVertexPositionInputs(posOS);
     // Lighting uses the same normal as extrusion when smooth-from-VC is on.
@@ -433,6 +462,7 @@ struct ShadowAttributes
     float3 normalOS   : NORMAL;
     float4 color      : COLOR;
     float2 uv         : TEXCOORD0;
+    uint   vertexId   : SV_VertexID;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
 
@@ -460,7 +490,7 @@ ShadowVaryings ShellFurShadowVert(ShadowAttributes input)
 
     float layer = GetShellLayer(id);
     float3 extrudeN = ResolveExtrudeNormalOS(input.normalOS, input.color);
-    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
+    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer, input.vertexId);
 
     float3 positionWS = TransformObjectToWorld(posOS);
     float3 normalWS   = TransformObjectToWorldNormal(extrudeN);
@@ -506,6 +536,7 @@ struct DepthAttributes
     float3 normalOS   : NORMAL;
     float4 color      : COLOR;
     float2 uv         : TEXCOORD0;
+    uint   vertexId   : SV_VertexID;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
 
@@ -530,7 +561,7 @@ DepthVaryings ShellFurDepthVert(DepthAttributes input)
 
     float layer = GetShellLayer(id);
     float3 extrudeN = ResolveExtrudeNormalOS(input.normalOS, input.color);
-    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer);
+    float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer, input.vertexId);
 
     output.positionCS = TransformObjectToHClip(posOS);
     output.furUV = ApplyFurUvBend(TRANSFORM_TEX(input.uv, _FurMap), layer);
@@ -604,13 +635,20 @@ float ComputeFinSilhouette(float3 positionWS, float3 faceNormalA_OS, float3 face
     return saturate(raw * max(_FinExtrudeWeight, 0.0));
 }
 
-float3 ApplyFinDisplacement(float3 baseOS, float3 upOS, float height01, float silhouette)
+float3 ApplyFinDisplacement(float3 baseOS, float3 upOS, float height01, float silhouette, uint sourceVertexId)
 {
     float h = saturate(height01) * saturate(silhouette);
     float len = _FurLength * max(_FinLengthScale, 0.0);
     float rootLift = _FinRootOffset * (1.0 - saturate(height01));
     float3 up = normalize(upOS + 1e-5);
     float hBend = saturate(height01);
+
+    if (_UseVertexPbd > 0.5)
+    {
+        float3 rootWS = TransformObjectToWorld(baseOS);
+        float3 offsetWS = SampleVertexPbdBezierWS(sourceVertexId, hBend) * saturate(silhouette);
+        return TransformWorldToObject(rootWS + offsetWS + TransformObjectToWorldDir(up * rootLift, false));
+    }
 
     // Base fin extrusion + optional additive guide offset.
     float3 pos = baseOS + up * (len * h + rootLift);
@@ -664,7 +702,8 @@ FinVaryings ShellFurFinVert(FinAttributes input)
     float sil = ComputeFinSilhouette(baseWS, input.faceA, input.faceB);
 
     float height01 = saturate(input.height.x);
-    float3 posOS = ApplyFinDisplacement(input.positionOS.xyz, input.normalOS, height01, sil);
+    uint srcVid = (uint)(input.height.y + 0.5);
+    float3 posOS = ApplyFinDisplacement(input.positionOS.xyz, input.normalOS, height01, sil, srcVid);
 
     // Degenerate non-silhouette fins (tips collapse to base).
     VertexPositionInputs posInputs = GetVertexPositionInputs(posOS);
@@ -741,7 +780,8 @@ FinShadowVaryings ShellFurFinShadowVert(FinShadowAttributes input)
     float3 baseWS = TransformObjectToWorld(input.positionOS.xyz);
     float sil = ComputeFinSilhouette(baseWS, input.faceA, input.faceB);
     float height01 = input.height.x;
-    float3 posOS = ApplyFinDisplacement(input.positionOS.xyz, input.normalOS, height01, sil);
+    uint srcVid = (uint)(input.height.y + 0.5);
+    float3 posOS = ApplyFinDisplacement(input.positionOS.xyz, input.normalOS, height01, sil, srcVid);
 
     float3 positionWS = TransformObjectToWorld(posOS);
     float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
