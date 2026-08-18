@@ -75,17 +75,21 @@ float  _FurChainCount;
 float  _UseFurChain;
 float4 _FurChainErect; // xyz = erect axis used by simulation (usually -gravity)
 
-// Per-vertex PBD (HTML): cubic Bezier handles d1,d2,d3 as world offsets from the vertex root.
-// Layout: _VertexPbdBezier[vid * 3 + {0,1,2}].
+// Per-vertex PBD (HTML): cubic Bezier handles d1,d2,d3 as world offsets from the guide root.
+// Position-welded guides: _VertexToGuide[vid] → guide id, then _VertexPbdBezier[gid * 3 + {0,1,2}].
 StructuredBuffer<float4> _VertexPbdBezier;
+StructuredBuffer<uint> _VertexToGuide;
 float _UseVertexPbd;
-float _VertexPbdCount;
+float _VertexPbdCount;       // guide count
+float _VertexPbdVertexCount; // render vertex count
 
 float3 SampleVertexPbdBezierWS(uint vertexId, float layer)
 {
-    uint vcount = (uint)max(_VertexPbdCount, 1.0);
+    uint vcount = (uint)max(_VertexPbdVertexCount, 1.0);
+    uint gcount = (uint)max(_VertexPbdCount, 1.0);
     uint vid = min(vertexId, vcount - 1u);
-    uint base = vid * 3u;
+    uint gid = min(_VertexToGuide[vid], gcount - 1u);
+    uint base = gid * 3u;
     float t = saturate(layer);
     float s = 1.0 - t;
     float3 d1 = _VertexPbdBezier[base].xyz;

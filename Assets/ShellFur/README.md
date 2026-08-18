@@ -30,7 +30,7 @@ URP shell-fur implementation for Unity 6. Multiple transparent-cutout **shell la
 | Guide Offset Scale | **Shell response** (decoupled): δ = ((chainPos−root)/chainLen) × scale. Not tied to sim length |
 | Mode → Grass | HTML Interactive Grass: fixed segment length + hang stiffness |
 | Mode → Bone | MaxScript bone chain: rigid FK gravity rest tip + tip spring-damper + hard length (rotate only). Shell pack same as Grass |
-| Mode → PBD | **Per-vertex** HTML chains on `ShellFurRenderer` (root on surface, gravity/wind + shape-memory, stretch + LRA). Shells follow a cubic Bezier. Mesh must be Read/Write. Node Count 2 → 4 particles |
+| Mode → PBD | Position-welded HTML chains on `ShellFurRenderer` (UV seams share a guide; Burst `IJobParallelFor`). Root on surface, gravity/wind + shape-memory, stretch + LRA. Shells follow a cubic Bezier. Mesh must be Read/Write. Node Count 2 → 4 particles |
 | Grass Stiffness | Recover speed toward hang ideal (~0.01–0.25 like the HTML slider) |
 | Bone Stiffness / Damping | HTML `_stiffness` / `_damping` (per 1/60s; defaults 0.1 / 0.7) |
 | Gravity As Rest Pose | Spring/Verlet only. ON: rest = static gravity shell pose; OFF: live g / chase previous. **Ignored in Grass/Bone** |

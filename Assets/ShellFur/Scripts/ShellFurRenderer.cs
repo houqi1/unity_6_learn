@@ -123,7 +123,7 @@ public class ShellFurRenderer : MonoBehaviour
     [SerializeField] float gravityPower = 2f;
 
     [Header("Dynamics (guide strand: root pinned to object)")]
-    [Tooltip("Spring / Verlet / Grass / Bone = one global guide. PBD = one chain per mesh vertex (HTML: shape-memory + stretch/LRA, shells follow a cubic Bezier). Mesh must be Read/Write. Node Count 2 uses 4 particles.")]
+    [Tooltip("Spring / Verlet / Grass / Bone = one global guide. PBD = position-welded per-vertex chains (UV seams share a guide; Burst job). Mesh must be Read/Write. Node Count 2 uses 4 particles.")]
     [SerializeField] ShellFurDynamics dynamics = new ShellFurDynamics();
 
     [Header("Rendering")]
