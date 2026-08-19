@@ -105,6 +105,10 @@ public class ParticleWaterFloat : MonoBehaviour
 
         int read = _ps.GetParticles(_particles, count);
         _ps.GetCustomParticleData(_custom1, ParticleSystemCustomData.Custom1);
+        // GetCustomParticleData 在部分版本上不会把 Count 收回到当前存活数。
+        // 系统循环播放越久，列表越容易比活粒子大，SetCustomParticleData 就会炸。
+        if (_custom1.Count > read)
+            _custom1.RemoveRange(read, _custom1.Count - read);
         while (_custom1.Count < read)
             _custom1.Add(Vector4.zero);
 
@@ -154,8 +158,10 @@ public class ParticleWaterFloat : MonoBehaviour
             _particles[i] = p;
         }
 
-        _ps.SetParticles(_particles, read);
+        // 必须先写 CustomData 再 SetParticles。SetParticles 会立刻杀掉 remainingLifetime<=0
+        // 的粒子，若先 SetParticles，后面再塞更大的 custom 数组就会 IndexOutOfRange。
         _ps.SetCustomParticleData(_custom1, ParticleSystemCustomData.Custom1);
+        _ps.SetParticles(_particles, read);
         PushRipplesToWater();
     }
 

@@ -183,6 +183,14 @@ MonoBehaviour:
     grassWindSpeed: 1.2
     boneStiffness: 0.1
     boneDamping: 0.7
+    pbdStiffness: 0.22
+    pbdDamping: 2.2
+    pbdGravity: 3
+    pbdIterations: 8
+    pbdSubsteps: 2
+    pbdWindStrength: 3
+    pbdWindTurbulence: 1.4
+    pbdWindDirection: 25
     bendStiffness: 12
     verletDamping: 0.12
     verletIterations: 8

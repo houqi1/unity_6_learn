@@ -41,6 +41,8 @@ Shader "Custom/ShellFurGpuSkinned"
         _ShadowStrength ("Self Shadow", Range(0, 10)) = 0.35
         _DiffuseBoostMin ("Diffuse Boost Min (Root)", Range(0, 8)) = 1
         _DiffuseBoostMax ("Diffuse Boost Max (Tip)", Range(0, 8)) = 1
+        [HDR] _AmbientColor ("Ambient Color", Color) = (0.18, 0.20, 0.24, 1)
+        _AmbientStrength ("Ambient Strength", Range(0, 4)) = 1
 
         [Header(Tip Strain Emission)]
         [Toggle] _StrainEmissionEnable ("Enable Strain Emission", Float) = 1

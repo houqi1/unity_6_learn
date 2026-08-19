@@ -156,7 +156,7 @@ Material:
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _DiffuseColor: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 1.6245048, g: 0, b: 0, a: 1}
-    - _EmissionMapColor: {r: 4.9245777, g: 4.9245777, b: 4.9245777, a: 1}
+    - _EmissionMapColor: {r: 0, g: 3.9068794, b: 5.929632, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
     - _TranslucencyColor: {r: 0.34999996, g: 0.54999995, b: 0.14999998, a: 1}
   m_BuildTextureStacks: []

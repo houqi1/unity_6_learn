@@ -338,7 +338,8 @@ public class ShellFurRenderer : MonoBehaviour
         RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
         RestoreSourceRendererState();
         dynamics?.ResetState();
-        _vertexPbd?.ResetChains();
+        _vertexPbd?.Dispose();
+        _vertexPbd = null;
         _dynamicsSteppedThisFrame = false;
         _dynamicsStepFrame = -1;
     }

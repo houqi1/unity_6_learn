@@ -68,9 +68,9 @@ Material:
     - _ZTest: 4
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 0.8113208, g: 0.5353482, b: 0.24951935, a: 1}
+    - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
     - _DiffuseColor: {r: 1, g: 0, b: 0, a: 1}
-    - _EmissionColor: {r: 1.1581389, g: 0.1464062, b: 0.1464062, a: 1}
+    - _EmissionColor: {r: 1, g: 0, b: 0.41443872, a: 1}
     - _RimColor: {r: 0.55, g: 0.85, b: 0.35, a: 1}
     - _SphereCenterOffset: {r: 0, g: 0, b: 0, a: 0}
     - _TranslucencyColor: {r: 1, g: 0.111320674, b: 0.13169737, a: 1}

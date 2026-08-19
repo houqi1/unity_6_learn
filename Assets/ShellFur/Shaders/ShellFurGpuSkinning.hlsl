@@ -44,6 +44,8 @@ CBUFFER_START(UnityPerMaterial)
     float  _ShadowStrength;
     float  _DiffuseBoostMin;
     float  _DiffuseBoostMax;
+    half4  _AmbientColor;
+    float  _AmbientStrength;
     float  _StrainEmissionEnable;
     half4  _StrainEmissionColor;
     float  _StrainEmissionIntensity;
@@ -248,7 +250,10 @@ half3 ShadeShellFurGpu(float3 positionWS, float3 normalWS, float2 uv, float laye
     half3 lighting = mainLight.color * (mainLight.shadowAttenuation * mainLight.distanceAttenuation * NdotL);
     half diffuseBoost = lerp(_DiffuseBoostMin, _DiffuseBoostMax, layer01);
     lighting *= diffuseBoost;
-    half3 ambient = SampleSH(n) * ao;
+    // SampleSH is often 0 on DrawMeshInstanced (LightProbeUsage.Off).
+    // Add a material ambient so the fur still has fill in shadow / unlit areas.
+    half3 ambient = SampleSH(n) + _AmbientColor.rgb * max(_AmbientStrength, 0.0);
+    ambient *= ao;
     half3 color = albedo * (ambient + lighting);
 
 #if defined(_ADDITIONAL_LIGHTS)
