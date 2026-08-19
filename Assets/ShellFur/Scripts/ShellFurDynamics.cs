@@ -156,6 +156,10 @@ public class ShellFurDynamics
     [Min(0f)]
     public float pbdGravity = 3f;
 
+    [Tooltip("How much gravity is kept along the strand (fiber compression). 0 = only the component perpendicular to the surface normal (scheme B, no Euler buckling on top hair). 0.15 = slight top sag.")]
+    [Range(0f, 1f)]
+    public float pbdGravityAxial = 0f;
+
     [Tooltip("Hard-constraint iterations per substep (stretch + LRA).")]
     [Range(2, 20)]
     public int pbdIterations = 8;
@@ -432,6 +436,7 @@ public class ShellFurDynamics
         boneStiffness = Mathf.Clamp(boneStiffness, 0.01f, 0.5f);
         boneDamping = Mathf.Clamp(boneDamping, 0.5f, 0.99f);
         pbdStiffness = Mathf.Clamp(pbdStiffness, 0.02f, 0.95f);
+        pbdGravityAxial = Mathf.Clamp01(pbdGravityAxial);
         pbdDamping = Mathf.Clamp(pbdDamping, 0f, 8f);
         pbdGravity = Mathf.Max(0f, pbdGravity);
         pbdIterations = Mathf.Clamp(pbdIterations, 2, 20);
@@ -699,7 +704,11 @@ public class ShellFurDynamics
             a.x = wxd * wStr * gust * t + Mathf.Sin(time * 1.9f + p.y * 2.3f) * wTurb * t;
             a.y = Mathf.Sin(time * 1.3f + p.x * 1.9f + p.z * 1.4f) * wTurb * 0.4f * t;
             a.z = wzd * wStr * gust * t + Mathf.Cos(time * 1.6f + p.x * 2.1f) * wTurb * t;
-            a += gDir * (gScale * t);
+            // Scheme B: drop most of the gravity along the fiber (n) so upright
+            // strands are not compressed into an Euler buckle.
+            float gAlong = Vector3.Dot(gDir, erect);
+            Vector3 gBend = gDir - erect * (gAlong * (1f - pbdGravityAxial));
+            a += gBend * (gScale * t);
 
             // Underdamped spring toward stand-up rest along erect.
             Vector3 rest = anchor + erect * (segLen * k);

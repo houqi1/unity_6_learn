@@ -578,6 +578,7 @@ public sealed class ShellFurVertexPbd : IDisposable
         public float dampMul;
         public float kSpring;
         public float gScale;
+        public float gAxial;
         public float3 gDir;
         public float wxd, wzd, wStr, wTurb;
         public float teleportSq;
@@ -607,6 +608,7 @@ public sealed class ShellFurVertexPbd : IDisposable
                 damping = math.max(0f, dyn.pbdDamping),
                 kSpring = math.clamp(dyn.pbdStiffness, 0.02f, 0.95f) * SpringScale,
                 gScale = math.max(0f, dyn.pbdGravity),
+                gAxial = math.clamp(dyn.pbdGravityAxial, 0f, 1f),
                 gDir = new float3(gDir.x, gDir.y, gDir.z),
                 wxd = math.cos(dyn.pbdWindDirection * math.TORADIANS),
                 wzd = -math.sin(dyn.pbdWindDirection * math.TORADIANS),
@@ -747,9 +749,15 @@ public sealed class ShellFurVertexPbd : IDisposable
                 float ax = p.wxd * p.wStr * gust * t + math.sin(p.time * 1.9f + py * 2.3f + ph) * p.wTurb * t;
                 float ay = math.sin(p.time * 1.3f + px * 1.9f + pz * 1.4f) * p.wTurb * 0.4f * t;
                 float az = p.wzd * p.wStr * gust * t + math.cos(p.time * 1.6f + px * 2.1f + ph) * p.wTurb * t;
-                ax += p.gDir.x * (p.gScale * t);
-                ay += p.gDir.y * (p.gScale * t);
-                az += p.gDir.z * (p.gScale * t);
+                // Scheme B: keep gravity perpendicular to the strand normal.
+                float gAlong = math.dot(p.gDir, n);
+                float drop = 1f - p.gAxial;
+                float gx = p.gDir.x - n.x * (gAlong * drop);
+                float gy = p.gDir.y - n.y * (gAlong * drop);
+                float gz = p.gDir.z - n.z * (gAlong * drop);
+                ax += gx * (p.gScale * t);
+                ay += gy * (p.gScale * t);
+                az += gz * (p.gScale * t);
 
                 float rx = root.x + n.x * restLen * k;
                 float ry = root.y + n.y * restLen * k;

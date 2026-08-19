@@ -334,6 +334,7 @@ public sealed class ShellFurLocalGrassGuides : IDisposable
         dst.pbdStiffness = src.pbdStiffness;
         dst.pbdDamping = src.pbdDamping;
         dst.pbdGravity = src.pbdGravity;
+        dst.pbdGravityAxial = src.pbdGravityAxial;
         dst.pbdIterations = src.pbdIterations;
         dst.pbdSubsteps = src.pbdSubsteps;
         dst.pbdWindStrength = src.pbdWindStrength;
