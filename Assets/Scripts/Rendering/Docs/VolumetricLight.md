@@ -116,7 +116,7 @@ Opaques → Copy Depth / Opaque → Skybox
 | `Assets/Shaders/VolumetricLightShadow.shader` | 非主光时渲正交深度（可复用 URP ShadowCaster） |
 | 本文档 | 方案 |
 
-抖动第一期用 Interleaved Gradient Noise，不另做蓝噪声贴图。
+抖动用 Interleaved Gradient Noise，不另做蓝噪声贴图。Volume 上有独立的 **Jitter** 开关；关掉后每步采区间中点，颗粒消失，远处可能露出步进条带。
 
 ---
 
@@ -243,7 +243,8 @@ float3 lightCol = _LightColor.rgb * _Intensity;
 | Max Distance | 160 | 射线最远 |
 | Height Start / Falloff | 3.14 / 0.08 | 贴地变淡 |
 | Shadow Strength | 1 | 树隙对比度，0 = 无光柱 |
-| Noise Amp | 0 | 默认关 |
+| Noise Amp | 0 | 介质 3D 噪声，默认关 |
+| Jitter | true | 沿视线抖动采样起点。关了更干净，条带可能更明显 |
 | Apply Extinction | false | 是否用 T 压暗场景 |
 | Composite Scale | 1 | 合成微调 |
 

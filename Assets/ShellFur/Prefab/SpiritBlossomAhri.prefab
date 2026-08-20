@@ -186,6 +186,7 @@ MonoBehaviour:
     pbdStiffness: 0.22
     pbdDamping: 2.2
     pbdGravity: 3
+    pbdGravityAxial: 0
     pbdIterations: 8
     pbdSubsteps: 2
     pbdWindStrength: 3

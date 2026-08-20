@@ -27,6 +27,10 @@ public class VolumetricLightVolume : VolumeComponent, IPostProcessComponent
     public ClampedFloatParameter heightFalloff = new ClampedFloatParameter(0.08f, 0f, 2f);
     public ClampedFloatParameter noiseAmp = new ClampedFloatParameter(0f, 0f, 1f);
 
+    [Header("Sampling")]
+    [Tooltip("沿视线抖动采样起点，打散条带。关了更干净，远处可能露出步进条带。")]
+    public BoolParameter jitter = new BoolParameter(true);
+
     [Header("Shadow Shafts")]
     public ClampedFloatParameter shadowStrength = new ClampedFloatParameter(1f, 0f, 1f);
 

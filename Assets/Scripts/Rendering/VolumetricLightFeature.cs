@@ -143,6 +143,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
         static readonly int ID_HeightFalloff = Shader.PropertyToID("_HeightFalloff");
         static readonly int ID_ShadowStrength = Shader.PropertyToID("_ShadowStrength");
         static readonly int ID_NoiseAmp = Shader.PropertyToID("_NoiseAmp");
+        static readonly int ID_Jitter = Shader.PropertyToID("_Jitter");
         static readonly int ID_ApplyExtinction = Shader.PropertyToID("_ApplyExtinction");
         static readonly int ID_CompositeScale = Shader.PropertyToID("_CompositeScale");
         static readonly int ID_StepCount = Shader.PropertyToID("_StepCount");
@@ -205,6 +206,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             public float heightFalloff;
             public float shadowStrength;
             public float noiseAmp;
+            public float jitter;
             public float applyExtinction;
             public float compositeScale;
             public float stepCount;
@@ -348,6 +350,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 heightFalloff = m_Volume.heightFalloff.value,
                 shadowStrength = m_Volume.shadowStrength.value,
                 noiseAmp = m_Volume.noiseAmp.value,
+                jitter = m_Volume.jitter.value ? 1f : 0f,
                 applyExtinction = m_Volume.applyExtinction.value ? 1f : 0f,
                 compositeScale = m_Volume.compositeScale.value,
                 stepCount = steps,
@@ -534,6 +537,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             cmd.SetGlobalFloat(ID_HeightFalloff, p.heightFalloff);
             cmd.SetGlobalFloat(ID_ShadowStrength, p.shadowStrength);
             cmd.SetGlobalFloat(ID_NoiseAmp, p.noiseAmp);
+            cmd.SetGlobalFloat(ID_Jitter, p.jitter);
             cmd.SetGlobalFloat(ID_ApplyExtinction, p.applyExtinction);
             cmd.SetGlobalFloat(ID_CompositeScale, p.compositeScale);
             cmd.SetGlobalFloat(ID_StepCount, p.stepCount);

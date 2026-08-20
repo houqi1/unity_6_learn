@@ -18,6 +18,7 @@ float    _HeightStart;
 float    _HeightFalloff;
 float    _ShadowStrength;
 float    _NoiseAmp;
+float    _Jitter;
 float    _ApplyExtinction;
 float    _CompositeScale;
 float    _StepCount;
@@ -139,8 +140,9 @@ float4 MarchVolumetric(float2 uv, float2 pixelPos)
 
     int stepCount = max(1, (int)_StepCount);
     float stepSize = sceneZ / (float)stepCount;
-    float jitter = InterleavedGradientNoise(pixelPos, (int)_Frame);
-    float t = jitter * stepSize;
+    float t = 0.5 * stepSize;
+    if (_Jitter > 0.5)
+        t = InterleavedGradientNoise(pixelPos, (int)_Frame) * stepSize;
 
     float T = 1.0;
     float3 inscatter = 0;
