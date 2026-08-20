@@ -171,6 +171,59 @@ Shader "Custom/ShellFur"
             #include "ShellFur.hlsl"
             ENDHLSL
         }
+
+        Pass
+        {
+            Name "DepthHull"
+            Tags { "LightMode" = "ShellFurDepthHull" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull [_Cull]
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex ShellFurDepthVert
+            #pragma fragment ShellFurDepthFrag
+            #define SHELL_FUR_DEPTH_HULL 1
+
+            #pragma multi_compile_instancing
+            #pragma shader_feature_local _USE_UV_BEND
+            #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
+
+            #include "ShellFur.hlsl"
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "VolumetricDepth"
+            Tags { "LightMode" = "ShellFurVolumetricDepth" }
+
+            Cull [_Cull]
+            ZWrite Off
+            ZTest Always
+            Blend One One
+            BlendOp Max
+            ColorMask R
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex ShellFurDepthVert
+            #pragma fragment ShellFurDepthFrag
+            #define SHELL_FUR_VOLUMETRIC_DEPTH 1
+
+            #pragma multi_compile_instancing
+            #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
+            #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
+            #pragma shader_feature_local _USE_UV_BEND
+            #pragma shader_feature_local _USE_SMOOTH_NORMALS_VC
+
+            #include "ShellFur.hlsl"
+            ENDHLSL
+        }
     }
 
     FallBack Off

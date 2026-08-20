@@ -426,4 +426,60 @@ half4 ShellFurGpuShadowFrag(ShadowVaryings input) : SV_Target
     return 0;
 }
 
+// Shell-layer depth only (no fins). Same extrusion + cutout as color shells.
+struct DepthAttributes
+{
+    float4 positionOS : POSITION;
+    uint vertexID : SV_VertexID;
+    UNITY_VERTEX_INPUT_INSTANCE_ID
+};
+
+struct DepthVaryings
+{
+    float4 positionCS : SV_POSITION;
+    float2 furUV : TEXCOORD0;
+    float layer : TEXCOORD1;
+    UNITY_VERTEX_INPUT_INSTANCE_ID
+};
+
+DepthVaryings ShellFurGpuDepthVert(DepthAttributes input)
+{
+    DepthVaryings output = (DepthVaryings)0;
+    UNITY_SETUP_INSTANCE_ID(input);
+    UNITY_TRANSFER_INSTANCE_ID(input, output);
+
+    uint inst = 0;
+#ifdef UNITY_INSTANCING_ENABLED
+    inst = unity_InstanceID;
+#endif
+
+    SkinnedVertex sv = _SkinnedVertices[input.vertexID];
+    float layer = GetShellLayer(inst);
+    float3 posWS = float3(sv.px, sv.py, sv.pz);
+    float3 nSmoothWS = float3(sv.sx, sv.sy, sv.sz);
+    posWS += nSmoothWS * (layer * _FurLength);
+    posWS += SampleShellDynamicsOffsetWS(input.vertexID, layer);
+    output.positionCS = TransformWorldToHClip(posWS);
+    output.furUV = ApplyFurUvBend(TRANSFORM_TEX(float2(sv.u, sv.v), _FurMap), layer);
+    output.layer = layer;
+    return output;
+}
+
+half4 ShellFurGpuDepthFrag(DepthVaryings input) : SV_Target
+{
+    UNITY_SETUP_INSTANCE_ID(input);
+    float alpha;
+    float strandHeight;
+    if (!EvaluateFurMaskGpu(input.furUV, input.layer, alpha, strandHeight))
+        discard;
+#if !defined(_SKIP_SOFT_ALPHA_CLIP)
+    clip(alpha - 0.01);
+#endif
+#if defined(SHELL_FUR_VOLUMETRIC_DEPTH)
+    return input.positionCS.z;
+#else
+    return 0;
+#endif
+}
+
 #endif

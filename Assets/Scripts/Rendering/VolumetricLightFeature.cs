@@ -44,6 +44,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
     VolumetricLightPass m_Pass;
     Material m_Material;
     static float s_LastWarnTime;
+    static bool s_LoggedFurDepthPath;
 
     public override void Create()
     {
@@ -118,6 +119,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             CoreUtils.Destroy(m_Material);
             m_Material = null;
         }
+        m_Pass?.ReleaseHistory();
         m_Pass = null;
     }
 
@@ -144,6 +146,12 @@ public class VolumetricLightFeature : ScriptableRendererFeature
         static readonly int ID_ShadowStrength = Shader.PropertyToID("_ShadowStrength");
         static readonly int ID_NoiseAmp = Shader.PropertyToID("_NoiseAmp");
         static readonly int ID_Jitter = Shader.PropertyToID("_Jitter");
+        static readonly int ID_HistoryTex = Shader.PropertyToID("_HistoryTex");
+        static readonly int ID_PrevVP = Shader.PropertyToID("_PrevVP");
+        static readonly int ID_TemporalBlend = Shader.PropertyToID("_TemporalBlend");
+        static readonly int ID_SpatialRadius = Shader.PropertyToID("_SpatialRadius");
+        static readonly int ID_HistoryValid = Shader.PropertyToID("_HistoryValid");
+        static readonly int ID_CameraDepthTexture = Shader.PropertyToID("_CameraDepthTexture");
         static readonly int ID_ApplyExtinction = Shader.PropertyToID("_ApplyExtinction");
         static readonly int ID_CompositeScale = Shader.PropertyToID("_CompositeScale");
         static readonly int ID_StepCount = Shader.PropertyToID("_StepCount");
@@ -173,10 +181,60 @@ public class VolumetricLightFeature : ScriptableRendererFeature
         VolumetricLightVolume m_Volume;
         VolumetricLightSource m_Source;
         Light m_Light;
+        readonly Dictionary<int, HistorySlot> m_History = new Dictionary<int, HistorySlot>();
+
+        class HistorySlot
+        {
+            public RTHandle texture;
+            public Matrix4x4 prevVP;
+            public Vector3 prevLightDir;
+            public int width;
+            public int height;
+            public bool valid;
+            public int lastFrame = -1;
+        }
 
         public VolumetricLightPass()
         {
             profilingSampler = new ProfilingSampler("VolumetricLight");
+        }
+
+        public void ReleaseHistory()
+        {
+            foreach (var kv in m_History)
+            {
+                if (kv.Value.texture != null)
+                    kv.Value.texture.Release();
+            }
+            m_History.Clear();
+        }
+
+        HistorySlot GetHistory(Camera cam, int width, int height)
+        {
+            int id = cam.GetInstanceID();
+            if (!m_History.TryGetValue(id, out HistorySlot slot))
+            {
+                slot = new HistorySlot();
+                m_History[id] = slot;
+            }
+
+            if (slot.texture == null || slot.width != width || slot.height != height)
+            {
+                slot.texture?.Release();
+                slot.texture = RTHandles.Alloc(
+                    width,
+                    height,
+                    TextureWrapMode.Clamp,
+                    TextureWrapMode.Clamp,
+                    colorFormat: GraphicsFormat.R16G16B16A16_SFloat,
+                    filterMode: FilterMode.Bilinear,
+                    name: "_VolumetricLightHistory");
+                slot.width = width;
+                slot.height = height;
+                slot.valid = false;
+            }
+
+            return slot;
         }
 
         public void Setup(Settings settings, Material material, VolumetricLightVolume volume, VolumetricLightSource source)
@@ -207,6 +265,11 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             public float shadowStrength;
             public float noiseAmp;
             public float jitter;
+            public float temporalBlend;
+            public float spatialRadius;
+            public float historyValid;
+            public Matrix4x4 prevVP;
+            public TextureHandle sceneDepth;
             public float applyExtinction;
             public float compositeScale;
             public float stepCount;
@@ -232,16 +295,28 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             public Matrix4x4 proj;
         }
 
+        class FurDepthPassData
+        {
+            public Material material;
+            public TextureHandle sourceDepth;
+            public TextureHandle destColor;
+            public TextureHandle destDepth;
+            public Matrix4x4 view;
+            public Matrix4x4 proj;
+        }
+
         class BlitPassData
         {
             public Material material;
             public TextureHandle source;
             public TextureHandle volume;
             public TextureHandle specifiedShadow;
+            public TextureHandle history;
             public SharedParams p;
             public int passIndex;
             public Vector2 blurDir;
             public bool bindSpecifiedShadow;
+            public bool bindHistory;
         }
 
         static void GetQuality(Quality q, int screenW, int screenH,
@@ -351,6 +426,11 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 shadowStrength = m_Volume.shadowStrength.value,
                 noiseAmp = m_Volume.noiseAmp.value,
                 jitter = m_Volume.jitter.value ? 1f : 0f,
+                temporalBlend = m_Volume.temporalBlend.value,
+                spatialRadius = m_Volume.spatialRadius.value,
+                historyValid = 0f,
+                prevVP = Matrix4x4.identity,
+                sceneDepth = TextureHandle.nullHandle,
                 applyExtinction = m_Volume.applyExtinction.value ? 1f : 0f,
                 compositeScale = m_Volume.compositeScale.value,
                 stepCount = steps,
@@ -402,18 +482,93 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 msaaSamples = MSAASamples.None,
                 depthBufferBits = DepthBits.None
             };
+            ShellFurGpuSkinRenderer.RefreshActive();
+            ShellFurRenderer.RefreshActive();
+            if (ShellFurGpuSkinRenderer.HasActiveDepthHull || ShellFurRenderer.HasActiveDepthHull)
+            {
+                var furColorDesc = new TextureDesc(desc.width, desc.height)
+                {
+                    name = "_VolumetricFurDepthColor",
+                    format = GraphicsFormat.R32_SFloat,
+                    filterMode = FilterMode.Point,
+                    wrapMode = TextureWrapMode.Clamp,
+                    clearBuffer = false,
+                    msaaSamples = MSAASamples.None,
+                    depthBufferBits = DepthBits.None
+                };
+                TextureHandle furColor = renderGraph.CreateTexture(furColorDesc);
+                RecordCopySceneDepth(renderGraph, furColor, depthTex);
+                RecordFurDepthHull(renderGraph, furColor, cam);
+                depthTex = furColor;
+                p.sceneDepth = furColor;
+                if (!s_LoggedFurDepthPath)
+                {
+                    s_LoggedFurDepthPath = true;
+                    Debug.Log("[VolumetricLight] Fur depth path on. Frame Debugger: CopySceneDepth then FurDepthHull.");
+                }
+            }
+
             TextureHandle volumeRT = renderGraph.CreateTexture(volDesc);
             TextureHandle blurRT = doBlur ? renderGraph.CreateTexture(volDesc) : TextureHandle.nullHandle;
+            bool doST = m_Volume.spatiotemporalResample.value;
+            TextureHandle accumRT = doST ? renderGraph.CreateTexture(volDesc) : volumeRT;
+            TextureHandle compositeVolume = volumeRT;
 
             RecordFullscreenPass(renderGraph, "Volumetric.March", volumeRT, TextureHandle.nullHandle,
                 depthTex, specifiedShadow, p, 0, Vector2.zero, useShadow: !useMain);
 
-            if (doBlur)
+            if (doST)
             {
-                RecordFullscreenPass(renderGraph, "Volumetric.BlurH", blurRT, volumeRT,
-                    depthTex, specifiedShadow, p, 1, new Vector2(1f, 0f), useShadow: false);
-                RecordFullscreenPass(renderGraph, "Volumetric.BlurV", volumeRT, blurRT,
-                    depthTex, specifiedShadow, p, 2, new Vector2(0f, 1f), useShadow: false);
+                HistorySlot slot = GetHistory(cam, vw, vh);
+                bool isNewFrame = slot.lastFrame != Time.frameCount;
+                bool lightMoved = slot.valid && Vector3.Dot(slot.prevLightDir, travelDir) < 0.995f;
+                p.prevVP = slot.prevVP;
+                p.historyValid = slot.valid && isNewFrame && !lightMoved ? 1f : 0f;
+
+                TextureHandle historyHandle = renderGraph.ImportTexture(slot.texture);
+                if (isNewFrame)
+                {
+                    RecordFullscreenPass(renderGraph, "Volumetric.Spatiotemporal", accumRT, volumeRT,
+                        depthTex, specifiedShadow, p, 1, Vector2.zero, useShadow: false,
+                        history: historyHandle, bindHistory: true);
+                    RecordFullscreenPass(renderGraph, "Volumetric.HistoryCopy", historyHandle, accumRT,
+                        depthTex, specifiedShadow, p, 5, Vector2.zero, useShadow: false);
+                    slot.prevVP = proj * view;
+                    slot.prevLightDir = travelDir;
+                    slot.valid = true;
+                    slot.lastFrame = Time.frameCount;
+                }
+                else
+                {
+                    RecordFullscreenPass(renderGraph, "Volumetric.HistoryReuse", accumRT, historyHandle,
+                        depthTex, specifiedShadow, p, 5, Vector2.zero, useShadow: false);
+                }
+
+                if (doBlur)
+                {
+                    RecordFullscreenPass(renderGraph, "Volumetric.BlurH", blurRT, accumRT,
+                        depthTex, specifiedShadow, p, 2, new Vector2(1f, 0f), useShadow: false);
+                    RecordFullscreenPass(renderGraph, "Volumetric.BlurV", volumeRT, blurRT,
+                        depthTex, specifiedShadow, p, 3, new Vector2(0f, 1f), useShadow: false);
+                    compositeVolume = volumeRT;
+                }
+                else
+                {
+                    compositeVolume = accumRT;
+                }
+            }
+            else
+            {
+                if (m_History.TryGetValue(cam.GetInstanceID(), out HistorySlot slot))
+                    slot.valid = false;
+
+                if (doBlur)
+                {
+                    RecordFullscreenPass(renderGraph, "Volumetric.BlurH", blurRT, volumeRT,
+                        depthTex, specifiedShadow, p, 2, new Vector2(1f, 0f), useShadow: false);
+                    RecordFullscreenPass(renderGraph, "Volumetric.BlurV", volumeRT, blurRT,
+                        depthTex, specifiedShadow, p, 3, new Vector2(0f, 1f), useShadow: false);
+                }
             }
 
             var destDesc = renderGraph.GetTextureDesc(cameraColor);
@@ -421,8 +576,54 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             destDesc.clearBuffer = false;
             TextureHandle destination = renderGraph.CreateTexture(destDesc);
 
-            RecordCompositePass(renderGraph, cameraColor, destination, volumeRT, depthTex, p);
+            RecordCompositePass(renderGraph, cameraColor, destination, compositeVolume, depthTex, p);
             resourceData.cameraColor = destination;
+        }
+
+        void RecordCopySceneDepth(RenderGraph renderGraph, TextureHandle destColor, TextureHandle source)
+        {
+            if (!destColor.IsValid() || !source.IsValid() || m_Material == null)
+                return;
+
+            using (var builder = renderGraph.AddRasterRenderPass<FurDepthPassData>(
+                       "Volumetric.CopySceneDepth", out var data, profilingSampler))
+            {
+                data.material = m_Material;
+                data.sourceDepth = source;
+                builder.UseTexture(source, AccessFlags.Read);
+                builder.SetRenderAttachment(destColor, 0, AccessFlags.Write);
+                builder.AllowPassCulling(false);
+                builder.AllowGlobalStateModification(true);
+                builder.SetRenderFunc(static (FurDepthPassData pass, RasterGraphContext ctx) =>
+                {
+                    ctx.cmd.SetGlobalTexture(ID_CameraDepthTexture, pass.sourceDepth);
+                    Blitter.BlitTexture(ctx.cmd, new Vector4(1f, 1f, 0f, 0f), pass.material, 6);
+                });
+            }
+        }
+
+        void RecordFurDepthHull(RenderGraph renderGraph, TextureHandle destColor, Camera cam)
+        {
+            if (!destColor.IsValid() || cam == null)
+                return;
+
+            using (var builder = renderGraph.AddUnsafePass<FurDepthPassData>(
+                       "Volumetric.FurDepthHull", out var data, profilingSampler))
+            {
+                data.view = cam.worldToCameraMatrix;
+                data.proj = cam.projectionMatrix;
+                data.destColor = destColor;
+                builder.UseTexture(destColor, AccessFlags.ReadWrite);
+                builder.AllowPassCulling(false);
+                builder.AllowGlobalStateModification(true);
+                builder.SetRenderFunc(static (FurDepthPassData pass, UnsafeGraphContext ctx) =>
+                {
+                    ctx.cmd.SetRenderTarget(pass.destColor);
+                    ctx.cmd.SetViewProjectionMatrices(pass.view, pass.proj);
+                    ShellFurGpuSkinRenderer.DrawAllDepthHulls(ctx.cmd);
+                    ShellFurRenderer.DrawAllDepthHulls(ctx.cmd);
+                });
+            }
         }
 
         void RecordShadowPass(RenderGraph renderGraph,
@@ -458,7 +659,8 @@ public class VolumetricLightFeature : ScriptableRendererFeature
 
         void RecordFullscreenPass(RenderGraph renderGraph, string name, TextureHandle dest,
             TextureHandle sourceVolume, TextureHandle depth, TextureHandle specifiedShadow,
-            SharedParams p, int passIndex, Vector2 blurDir, bool useShadow)
+            SharedParams p, int passIndex, Vector2 blurDir, bool useShadow,
+            TextureHandle history = default, bool bindHistory = false)
         {
             using (var builder = renderGraph.AddRasterRenderPass<BlitPassData>(name, out var data, profilingSampler))
             {
@@ -466,10 +668,12 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 data.source = sourceVolume;
                 data.volume = sourceVolume;
                 data.specifiedShadow = specifiedShadow;
+                data.history = history;
                 data.p = p;
                 data.passIndex = passIndex;
                 data.blurDir = blurDir;
                 data.bindSpecifiedShadow = useShadow && specifiedShadow.IsValid();
+                data.bindHistory = bindHistory && history.IsValid();
 
                 if (depth.IsValid())
                     builder.UseTexture(depth, AccessFlags.Read);
@@ -477,6 +681,8 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                     builder.UseTexture(sourceVolume, AccessFlags.Read);
                 if (data.bindSpecifiedShadow)
                     builder.UseTexture(specifiedShadow, AccessFlags.Read);
+                if (data.bindHistory)
+                    builder.UseTexture(history, AccessFlags.Read);
 
                 builder.SetRenderAttachment(dest, 0, AccessFlags.Write);
                 builder.AllowGlobalStateModification(true);
@@ -487,6 +693,8 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                     ctx.cmd.SetGlobalVector(ID_BlurDir, pass.blurDir);
                     if (pass.volume.IsValid())
                         ctx.cmd.SetGlobalTexture(ID_VolumeTex, pass.volume);
+                    if (pass.bindHistory)
+                        ctx.cmd.SetGlobalTexture(ID_HistoryTex, pass.history);
                     if (pass.bindSpecifiedShadow)
                         ctx.cmd.SetGlobalTexture(ID_SpecifiedShadow, pass.specifiedShadow, RenderTextureSubElement.Depth);
                     Blitter.BlitTexture(ctx.cmd, new Vector4(1f, 1f, 0f, 0f), pass.material, pass.passIndex);
@@ -504,7 +712,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 data.source = source;
                 data.volume = volumeRT;
                 data.p = p;
-                data.passIndex = 3;
+                data.passIndex = 4;
 
                 builder.UseTexture(source, AccessFlags.Read);
                 builder.UseTexture(volumeRT, AccessFlags.Read);
@@ -518,7 +726,7 @@ public class VolumetricLightFeature : ScriptableRendererFeature
                 {
                     PushShared(pass.p, ctx.cmd);
                     ctx.cmd.SetGlobalTexture(ID_VolumeTex, pass.volume);
-                    Blitter.BlitTexture(ctx.cmd, pass.source, new Vector4(1f, 1f, 0f, 0f), pass.material, 3);
+                    Blitter.BlitTexture(ctx.cmd, pass.source, new Vector4(1f, 1f, 0f, 0f), pass.material, 4);
                 });
             }
         }
@@ -538,6 +746,12 @@ public class VolumetricLightFeature : ScriptableRendererFeature
             cmd.SetGlobalFloat(ID_ShadowStrength, p.shadowStrength);
             cmd.SetGlobalFloat(ID_NoiseAmp, p.noiseAmp);
             cmd.SetGlobalFloat(ID_Jitter, p.jitter);
+            cmd.SetGlobalMatrix(ID_PrevVP, p.prevVP);
+            cmd.SetGlobalFloat(ID_TemporalBlend, p.temporalBlend);
+            cmd.SetGlobalFloat(ID_SpatialRadius, p.spatialRadius);
+            cmd.SetGlobalFloat(ID_HistoryValid, p.historyValid);
+            if (p.sceneDepth.IsValid())
+                cmd.SetGlobalTexture(ID_CameraDepthTexture, p.sceneDepth);
             cmd.SetGlobalFloat(ID_ApplyExtinction, p.applyExtinction);
             cmd.SetGlobalFloat(ID_CompositeScale, p.compositeScale);
             cmd.SetGlobalFloat(ID_StepCount, p.stepCount);

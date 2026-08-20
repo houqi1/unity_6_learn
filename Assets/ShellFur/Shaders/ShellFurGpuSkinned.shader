@@ -126,6 +126,59 @@ Shader "Custom/ShellFurGpuSkinned"
             #include "ShellFurGpuSkinning.hlsl"
             ENDHLSL
         }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull [_Cull]
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex ShellFurGpuDepthVert
+            #pragma fragment ShellFurGpuDepthFrag
+
+            #pragma multi_compile_instancing
+            #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
+            #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
+            #pragma shader_feature_local _USE_UV_BEND
+
+            #include "ShellFurGpuSkinning.hlsl"
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "VolumetricDepth"
+            Tags { "LightMode" = "ShellFurVolumetricDepth" }
+
+            Cull [_Cull]
+            ZWrite Off
+            ZTest Always
+            Blend One One
+            BlendOp Max
+            ColorMask R
+
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex ShellFurGpuDepthVert
+            #pragma fragment ShellFurGpuDepthFrag
+            #define SHELL_FUR_VOLUMETRIC_DEPTH 1
+
+            #pragma multi_compile_instancing
+            #pragma shader_feature_local _USE_PROCEDURAL
+            #pragma shader_feature_local _USE_TIP_ALPHA_CUTOFF
+            #pragma shader_feature_local _SKIP_SOFT_ALPHA_CLIP
+            #pragma shader_feature_local _USE_UV_BEND
+
+            #include "ShellFurGpuSkinning.hlsl"
+            ENDHLSL
+        }
     }
 
     FallBack Off

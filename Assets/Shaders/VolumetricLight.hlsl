@@ -42,6 +42,12 @@ TEXTURE2D_FLOAT(_SpecifiedShadowMap);
 SAMPLER(sampler_SpecifiedShadowMap);
 TEXTURE2D(_VolumeTex);
 SAMPLER(sampler_VolumeTex);
+TEXTURE2D(_HistoryTex);
+SAMPLER(sampler_HistoryTex);
+float4x4 _PrevVP;
+float    _TemporalBlend;
+float    _SpatialRadius;
+float    _HistoryValid;
 
 float HenyeyGreenstein(float mu, float g)
 {
@@ -199,6 +205,92 @@ float4 MarchVolumetric(float2 uv, float2 pixelPos)
     }
 
     return float4(inscatter, T);
+}
+
+float LumaST(float3 c)
+{
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+float4 SpatialResample(float2 uv)
+{
+    float4 center = SAMPLE_TEXTURE2D(_VolumeTex, sampler_VolumeTex, uv);
+    float radius = _SpatialRadius;
+    if (radius < 0.01)
+        return center;
+
+    float2 texel = _VolumeTexelSize.xy;
+    float centerDepth = LinearEyeDepth(SampleSceneDepth(uv), _ZBufferParams);
+    float4 acc = center;
+    float wsum = 1.0;
+
+    float ang = frac(_Frame * 0.7548776662) * 6.28318530718;
+    float s, c;
+    sincos(ang, s, c);
+    float2 d0 = float2(c, s) * texel * radius;
+    float2 d1 = float2(-d0.y, d0.x);
+    float2 offs[4] = { d0, -d0, d1, -d1 };
+
+    [unroll]
+    for (int i = 0; i < 4; i++)
+    {
+        float2 suv = uv + offs[i];
+        float4 samp = SAMPLE_TEXTURE2D(_VolumeTex, sampler_VolumeTex, suv);
+        float sd = LinearEyeDepth(SampleSceneDepth(suv), _ZBufferParams);
+        float rel = abs(sd - centerDepth) / max(centerDepth, 0.25);
+        float w = rel > 0.2 ? 0.0 : exp(-rel * 10.0);
+        acc += samp * w;
+        wsum += w;
+    }
+
+    return acc / max(wsum, 1e-5);
+}
+
+float4 SpatiotemporalResample(float2 uv)
+{
+    float4 current = SpatialResample(uv);
+    if (_HistoryValid < 0.5)
+        return current;
+
+    float rawDepth = SampleSceneDepth(uv);
+    float3 worldEnd = ComputeWorldSpacePosition(uv, rawDepth, _InverseVP);
+    float3 camPos = _WorldSpaceCameraPos;
+    float3 viewVec = worldEnd - camPos;
+    float sceneZ = length(viewVec);
+    float3 viewDir = sceneZ > 1e-5 ? viewVec / sceneZ : float3(0, 0, 1);
+    sceneZ = min(sceneZ, _MaxDistance);
+    float3 reprojectPos = camPos + viewDir * sceneZ;
+
+    float4 prevClip = mul(_PrevVP, float4(reprojectPos, 1.0));
+    if (prevClip.w < 1e-4)
+        return current;
+
+    float2 prevUV = prevClip.xy / prevClip.w * 0.5 + 0.5;
+    if (any(prevUV < 0.0) || any(prevUV > 1.0))
+        return current;
+
+    float4 history = SAMPLE_TEXTURE2D(_HistoryTex, sampler_HistoryTex, prevUV);
+
+    float alpha = _TemporalBlend;
+    float2 motion = prevUV - uv;
+    alpha = saturate(alpha + saturate(length(motion) * 6.0) * 0.65);
+
+    float lumC = LumaST(current.rgb);
+    float lumH = LumaST(history.rgb);
+    float lumDiff = abs(lumC - lumH) / max(lumC + lumH, 1e-3);
+    alpha = saturate(alpha + saturate((lumDiff - 0.45) * 3.0));
+
+    return lerp(history, current, alpha);
+}
+
+float4 CopyVolume(float2 uv)
+{
+    return SAMPLE_TEXTURE2D(_VolumeTex, sampler_VolumeTex, uv);
+}
+
+float CopySceneDepth(float2 uv)
+{
+    return SampleSceneDepth(uv);
 }
 
 float4 BilateralBlur(float2 uv)

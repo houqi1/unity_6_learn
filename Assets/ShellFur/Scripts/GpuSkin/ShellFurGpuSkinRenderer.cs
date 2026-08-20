@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -182,6 +183,8 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     Material _runtimeFurMat;
     Material _runtimeFinMat;
     static Material _skipMat;
+    static readonly List<ShellFurGpuSkinRenderer> s_Active = new List<ShellFurGpuSkinRenderer>();
+    static readonly Matrix4x4[] s_HullMatrix = { Matrix4x4.identity };
     Material[] _originalShared;
     bool _hijacked;
     int _lastPrepareFrame = -1;
@@ -202,9 +205,48 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
     public bool IsReady => _ready;
     public bool FinsReady => _finsReady;
     public int FinEdgeCount => _finEdgeCount;
+    public static bool HasActiveDepthHull
+    {
+        get
+        {
+            for (int i = 0; i < s_Active.Count; i++)
+            {
+                var r = s_Active[i];
+                if (r != null && r.isActiveAndEnabled && r._ready)
+                    return true;
+            }
+            return false;
+        }
+    }
+
+    public static void RefreshActive()
+    {
+        s_Active.RemoveAll(static r => r == null);
+        var found = Object.FindObjectsByType<ShellFurGpuSkinRenderer>(
+            FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+        for (int i = 0; i < found.Length; i++)
+        {
+            var r = found[i];
+            if (r != null && r.isActiveAndEnabled && !s_Active.Contains(r))
+                s_Active.Add(r);
+        }
+    }
+
+    public static void DrawAllDepthHulls(IRasterCommandBuffer cmd)
+    {
+        RefreshActive();
+        for (int i = 0; i < s_Active.Count; i++)
+        {
+            var r = s_Active[i];
+            if (r != null && r.isActiveAndEnabled)
+                r.DrawDepthHull(cmd);
+        }
+    }
 
     void OnEnable()
     {
+        if (!s_Active.Contains(this))
+            s_Active.Add(this);
         CacheRefs();
         EnsureMaterials();
         RebuildBindData();
@@ -214,6 +256,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
 
     void OnDisable()
     {
+        s_Active.Remove(this);
         RenderPipelineManager.beginCameraRendering -= OnBeginCamera;
         RestoreSourceRendererState();
         ReleaseGpu();
@@ -947,6 +990,8 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (camera == null || camera.cameraType == CameraType.Preview)
             return;
 
+        if (!s_Active.Contains(this))
+            s_Active.Add(this);
         PrepareSkinFrame();
         GenerateFinsForCamera(camera);
         DrawShells(camera);
@@ -967,19 +1012,7 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
         if (mat.shader == null || !mat.shader.isSupported)
             return;
 
-        int drawCount = shellCount;
-        float layerOffset = 0f;
-        if (finsOnly)
-        {
-            // Keep a single base/root shell so body is not hollow under fins.
-            drawCount = 1;
-            layerOffset = hideBaseMesh ? 1f : 0f;
-        }
-        else if (hideBaseMesh)
-        {
-            drawCount = Mathf.Max(1, shellCount - 1);
-            layerOffset = 1f;
-        }
+        GetShellDrawParams(out int drawCount, out float layerOffset);
 
         if (_mpb == null)
             _mpb = new MaterialPropertyBlock();
@@ -1018,6 +1051,57 @@ public class ShellFurGpuSkinRenderer : MonoBehaviour
             camera,
             LightProbeUsage.Off,
             null);
+    }
+
+    void GetShellDrawParams(out int drawCount, out float layerOffset)
+    {
+        drawCount = shellCount;
+        layerOffset = 0f;
+        if (finsOnly)
+        {
+            drawCount = 1;
+            layerOffset = hideBaseMesh ? 1f : 0f;
+        }
+        else if (hideBaseMesh)
+        {
+            drawCount = Mathf.Max(1, shellCount - 1);
+            layerOffset = 1f;
+        }
+    }
+
+    void DrawDepthHull(IRasterCommandBuffer cmd)
+    {
+        if (cmd == null || !_ready || _bindMesh == null || _skinnedBuffer == null)
+            return;
+
+        EnsureFurMaterial();
+        Material mat = _runtimeFurMat != null ? _runtimeFurMat : furMaterial;
+        if (mat == null || mat.shader == null || !mat.shader.isSupported)
+            return;
+        if (!mat.enableInstancing)
+            mat.enableInstancing = true;
+
+        int pass = mat.FindPass("VolumetricDepth");
+        if (pass < 0)
+        {
+            Debug.LogWarning("[ShellFurGpuSkin] VolumetricDepth pass missing; volumetric fur depth skipped.", this);
+            return;
+        }
+
+        GetShellDrawParams(out int drawCount, out float layerOffset);
+        if (_mpb == null)
+            _mpb = new MaterialPropertyBlock();
+        _mpb.Clear();
+        _mpb.SetBuffer(SkinnedVerticesId, _skinnedBuffer);
+        _mpb.SetFloat(ShellCountId, Mathf.Max(shellCount, 2));
+        _mpb.SetFloat(FurLengthId, furLength);
+        ApplyPhysicsToMpb(_mpb);
+
+        for (int i = 0; i < drawCount; i++)
+        {
+            _mpb.SetFloat(ShellLayerOffsetId, layerOffset + i);
+            cmd.DrawMesh(_bindMesh, Matrix4x4.identity, mat, 0, pass, _mpb);
+        }
     }
 
     void DrawFins(Camera camera)

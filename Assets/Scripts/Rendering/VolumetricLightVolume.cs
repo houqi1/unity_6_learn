@@ -28,8 +28,16 @@ public class VolumetricLightVolume : VolumeComponent, IPostProcessComponent
     public ClampedFloatParameter noiseAmp = new ClampedFloatParameter(0f, 0f, 1f);
 
     [Header("Sampling")]
-    [Tooltip("沿视线抖动采样起点，打散条带。关了更干净，远处可能露出步进条带。")]
+    [Tooltip("沿视线抖动采样起点，打散条带。开时空重采样时建议保持开启，用多帧样本压颗粒。")]
     public BoolParameter jitter = new BoolParameter(true);
+
+    [Header("Spatiotemporal")]
+    [Tooltip("空间邻域重用 + 时间重投影混合。用来压光线步进/Jitter 的颗粒，不是路径追踪 ReSTIR。")]
+    public BoolParameter spatiotemporalResample = new BoolParameter(true);
+    [Tooltip("当前帧权重。越小越稳，越容易拖影。0.12 ≈ 88% 历史。")]
+    public ClampedFloatParameter temporalBlend = new ClampedFloatParameter(0.12f, 0.02f, 1f);
+    [Tooltip("空间重采样半径（纹素）。0 只做时间混合。")]
+    public ClampedFloatParameter spatialRadius = new ClampedFloatParameter(2f, 0f, 8f);
 
     [Header("Shadow Shafts")]
     public ClampedFloatParameter shadowStrength = new ClampedFloatParameter(1f, 0f, 1f);

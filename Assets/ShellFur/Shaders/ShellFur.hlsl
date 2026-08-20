@@ -563,7 +563,11 @@ DepthVaryings ShellFurDepthVert(DepthAttributes input)
     id = unity_InstanceID;
 #endif
 
+#ifdef SHELL_FUR_DEPTH_HULL
+    float layer = 1.0;
+#else
     float layer = GetShellLayer(id);
+#endif
     float3 extrudeN = ResolveExtrudeNormalOS(input.normalOS, input.color);
     float3 posOS = ApplyShellDisplacement(input.positionOS.xyz, extrudeN, layer, input.vertexId);
 
@@ -577,6 +581,7 @@ half4 ShellFurDepthFrag(DepthVaryings input) : SV_Target
 {
     UNITY_SETUP_INSTANCE_ID(input);
 
+#ifndef SHELL_FUR_DEPTH_HULL
     float alpha;
     float strandHeight;
     if (!EvaluateFurMask(input.furUV, input.layer, alpha, strandHeight))
@@ -584,7 +589,12 @@ half4 ShellFurDepthFrag(DepthVaryings input) : SV_Target
 #if !defined(_SKIP_SOFT_ALPHA_CLIP)
     clip(alpha - 0.01);
 #endif
+#endif
+#if defined(SHELL_FUR_VOLUMETRIC_DEPTH)
+    return input.positionCS.z;
+#else
     return 0;
+#endif
 }
 
 // ---------------------------------------------------------------------------

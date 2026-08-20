@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -165,6 +166,8 @@ public class ShellFurRenderer : MonoBehaviour
     int _dynamicsStepFrame = -1;
     ShellFurVertexPbd _vertexPbd;
     bool _loggedVertexPbdFail;
+    static readonly List<ShellFurRenderer> s_Active = new List<ShellFurRenderer>();
+    readonly Matrix4x4[] _hullMatrices = new Matrix4x4[1];
 
     bool UseVertexPbd =>
         dynamics != null && dynamics.enabled && dynamics.mode == ShellFurDynamics.Mode.Pbd;
@@ -179,6 +182,44 @@ public class ShellFurRenderer : MonoBehaviour
     {
         get => furLength;
         set => furLength = Mathf.Max(0.001f, value);
+    }
+
+    public static bool HasActiveDepthHull
+    {
+        get
+        {
+            for (int i = 0; i < s_Active.Count; i++)
+            {
+                var r = s_Active[i];
+                if (r != null && r.isActiveAndEnabled && r.furMaterial != null)
+                    return true;
+            }
+            return false;
+        }
+    }
+
+    public static void RefreshActive()
+    {
+        s_Active.RemoveAll(static r => r == null);
+        var found = Object.FindObjectsByType<ShellFurRenderer>(
+            FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+        for (int i = 0; i < found.Length; i++)
+        {
+            var r = found[i];
+            if (r != null && r.isActiveAndEnabled && !s_Active.Contains(r))
+                s_Active.Add(r);
+        }
+    }
+
+    public static void DrawAllDepthHulls(IRasterCommandBuffer cmd)
+    {
+        RefreshActive();
+        for (int i = 0; i < s_Active.Count; i++)
+        {
+            var r = s_Active[i];
+            if (r != null && r.isActiveAndEnabled)
+                r.DrawDepthHull(cmd);
+        }
     }
 
     public Material FurMaterial
@@ -321,6 +362,8 @@ public class ShellFurRenderer : MonoBehaviour
 
     void OnEnable()
     {
+        if (!s_Active.Contains(this))
+            s_Active.Add(this);
         CacheComponents();
         EnsureBuffers(shellCount);
         EnsureMaterial();
@@ -335,6 +378,7 @@ public class ShellFurRenderer : MonoBehaviour
 
     void OnDisable()
     {
+        s_Active.Remove(this);
         RenderPipelineManager.beginCameraRendering -= OnBeginCameraRendering;
         RestoreSourceRendererState();
         dynamics?.ResetState();
@@ -768,6 +812,9 @@ public class ShellFurRenderer : MonoBehaviour
         if (camera == null || camera.cameraType == CameraType.Preview)
             return;
 
+        if (!s_Active.Contains(this))
+            s_Active.Add(this);
+
         PrepareSkinnedPoseIfNeeded();
 
         bool drawFins = (enableFins || finsOnly) && !IsSkinned;
@@ -951,6 +998,59 @@ public class ShellFurRenderer : MonoBehaviour
                 $"[{nameof(ShellFurRenderer)}] Shells '{name}' skinned={IsSkinned} drawCount={drawCount} slots=[{string.Join(",", slots)}]",
                 this);
             _loggedDraw = true;
+        }
+    }
+
+    void DrawDepthHull(IRasterCommandBuffer cmd)
+    {
+        if (cmd == null || furMaterial == null)
+            return;
+        Mesh mesh = ActiveDrawMesh;
+        if (mesh == null)
+            return;
+        if (furMaterial.shader == null || !furMaterial.shader.isSupported)
+            return;
+
+        int pass = furMaterial.FindPass("VolumetricDepth");
+        if (pass < 0)
+            return;
+
+        int[] slots = GetActiveFurSubmeshes(mesh);
+        if (slots == null)
+        {
+            int n = Mathf.Max(1, mesh.subMeshCount);
+            slots = new int[n];
+            for (int i = 0; i < n; i++)
+                slots[i] = i;
+        }
+        if (slots.Length == 0)
+            return;
+
+        int drawCount = shellCount;
+        float layerOffset = 0f;
+        if (finsOnly)
+        {
+            drawCount = 1;
+            layerOffset = hideBaseMesh ? 1f : 0f;
+        }
+        else if (useMaterialSlotOnly && hideBaseMesh)
+        {
+            drawCount = Mathf.Max(1, shellCount - 1);
+            layerOffset = 1f;
+        }
+
+        FillPropertyBlock();
+        _mpb.SetFloat(ShellCountId, Mathf.Max(shellCount, 2));
+        Matrix4x4 m = DrawLocalToWorld;
+        int subCount = Mathf.Max(1, mesh.subMeshCount);
+        for (int i = 0; i < drawCount; i++)
+        {
+            _mpb.SetFloat(ShellLayerOffsetId, layerOffset + i);
+            for (int s = 0; s < slots.Length; s++)
+            {
+                int submesh = Mathf.Clamp(slots[s], 0, subCount - 1);
+                cmd.DrawMesh(mesh, m, furMaterial, submesh, pass, _mpb);
+            }
         }
     }
 

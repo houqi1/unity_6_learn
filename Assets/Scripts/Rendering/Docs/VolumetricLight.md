@@ -45,7 +45,7 @@
 | 点光 / 聚光体积 | 第一期只做定向光 |
 | 自动跟「场景主光」走 | 必须显式指定一盏灯 |
 | 多盏体积光叠加 | 只认一个 Source |
-| TAA 历史复用 | 第二期 |
+| TAA 历史复用 | 已做屏幕空间时空重采样（非 ReSTIR） |
 | 改 `Water.hlsl` / 树着色器 | 光柱第一期不进 SSPR 反射 |
 
 ---
@@ -118,6 +118,8 @@ Opaques → Copy Depth / Opaque → Skybox
 
 抖动用 Interleaved Gradient Noise，不另做蓝噪声贴图。Volume 上有独立的 **Jitter** 开关；关掉后每步采区间中点，颗粒消失，远处可能露出步进条带。
 
+降噪走 **空间邻域重用 + 时间重投影**（Wronski / UE Volumetric Fog / ARM clustered fog 那套），不是 SIGGRAPH Asia 2021 的 Volumetric ReSTIR。ReSTIR 是路径空间水库重采样，给云/烟路径追踪用，和本工程的屏幕空间单次散射步进对不上。Jitter 负责把条带打散成颗粒，时空混合把多帧样本叠回去。
+
 ---
 
 ## 6. 职责划分
@@ -146,6 +148,8 @@ Intensity ≈ 0 或 Volume 未开：不入队。
 Depth + 指定灯方向/颜色 + 同向阴影 + IGN
         ↓
 Pass1  半分辨率步进  →  HDR Volume RT（RGB=inscatter，A=T）
+        ↓
+Pass1b 空间 4 tap + 时间重投影（可关）→ 写入 History
         ↓
 Pass2  双边模糊（Medium / High）
         ↓
@@ -244,7 +248,10 @@ float3 lightCol = _LightColor.rgb * _Intensity;
 | Height Start / Falloff | 3.14 / 0.08 | 贴地变淡 |
 | Shadow Strength | 1 | 树隙对比度，0 = 无光柱 |
 | Noise Amp | 0 | 介质 3D 噪声，默认关 |
-| Jitter | true | 沿视线抖动采样起点。关了更干净，条带可能更明显 |
+| Jitter | true | 沿视线抖动采样起点。开时空重采样时建议保持开启 |
+| Spatiotemporal Resample | true | 空间邻域 + 时间重投影 |
+| Temporal Blend | 0.12 | 当前帧权重，越小越稳越容易拖影 |
+| Spatial Radius | 2 | 空间重采样半径（纹素），0 只做时间混合 |
 | Apply Extinction | false | 是否用 T 压暗场景 |
 | Composite Scale | 1 | 合成微调 |
 

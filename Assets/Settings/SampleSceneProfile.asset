@@ -160,6 +160,15 @@ MonoBehaviour:
   jitter:
     m_OverrideState: 1
     m_Value: 1
+  spatiotemporalResample:
+    m_OverrideState: 1
+    m_Value: 1
+  temporalBlend:
+    m_OverrideState: 1
+    m_Value: 0.12
+  spatialRadius:
+    m_OverrideState: 1
+    m_Value: 2
   shadowStrength:
     m_OverrideState: 1
     m_Value: 1

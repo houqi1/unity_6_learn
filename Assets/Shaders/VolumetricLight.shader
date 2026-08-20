@@ -28,6 +28,24 @@ Shader "Hidden/VolumetricLight"
 
         Pass
         {
+            Name "Spatiotemporal"
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragST
+            #pragma target 3.5
+            #include "VolumetricLight.hlsl"
+
+            float4 FragST(Varyings input) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                return SpatiotemporalResample(input.texcoord.xy);
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
             Name "BlurH"
 
             HLSLPROGRAM
@@ -78,6 +96,46 @@ Shader "Hidden/VolumetricLight"
                 float2 uv = input.texcoord.xy;
                 float3 scene = SAMPLE_TEXTURE2D_X_LOD(_BlitTexture, sampler_LinearClamp, uv, 0).rgb;
                 return CompositeVolumetric(uv, scene);
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "HistoryCopy"
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragCopy
+            #pragma target 3.5
+            #include "VolumetricLight.hlsl"
+
+            float4 FragCopy(Varyings input) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                return CopyVolume(input.texcoord.xy);
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "CopySceneDepth"
+            ZWrite Off
+            ZTest Always
+            Cull Off
+
+            HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment FragCopySceneDepth
+            #pragma target 3.5
+            #include "VolumetricLight.hlsl"
+
+            float4 FragCopySceneDepth(Varyings input) : SV_Target
+            {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                float d = CopySceneDepth(input.texcoord.xy);
+                return float4(d, d, d, 1);
             }
             ENDHLSL
         }
